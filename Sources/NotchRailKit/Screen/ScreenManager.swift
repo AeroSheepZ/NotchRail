@@ -16,6 +16,13 @@ public final class ScreenManager: ObservableObject {
     @Published public private(set) var currentGeometry: NotchGeometry
     @Published public private(set) var allGeometries: [NotchGeometry] = []
     
+    /// 获取主显示器几何（优先物理刘海屏或内置 Retina，回退主屏）
+    public var primaryGeometry: NotchGeometry {
+        return allGeometries.first(where: { $0.hasPhysicalNotch || $0.isBuiltIn })
+            ?? allGeometries.first
+            ?? currentGeometry
+    }
+    
     private var cancellables = Set<AnyCancellable>()
     
     private init() {

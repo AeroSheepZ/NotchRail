@@ -23,7 +23,7 @@ public final class SettingsWindowCoordinator {
         let hostingController = NSHostingController(rootView: settingsView)
         
         let panel = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false

@@ -35,4 +35,27 @@ final class ScreenManagerTests: XCTestCase {
         XCTAssertEqual(extGeometry.dynamicExtendedBounds(for: 3).width, 248)
         XCTAssertEqual(extGeometry.dynamicExtendedBounds(for: 10).width, 500)
     }
+    
+    func testMultiDisplayOffsetCoordinates() {
+        let offsetScreenFrame = CGRect(x: 2560, y: 0, width: 2560, height: 1440)
+        let offsetNotchRect = CGRect(x: 2560 + (2560 - 160) / 2, y: 1440 - 34, width: 160, height: 34)
+        let offsetGeometry = NotchGeometry(
+            displayID: 3,
+            displayName: "Secondary Screen",
+            isBuiltIn: false,
+            hasPhysicalNotch: false,
+            scaleFactor: 1.0,
+            screenFrame: offsetScreenFrame,
+            visibleFrame: offsetScreenFrame,
+            safeAreaInsets: NSEdgeInsets(),
+            physicalNotchRect: offsetNotchRect,
+            compactBounds: CGRect(x: 2560 + 1200, y: 1404, width: 172, height: 36),
+            extendedBounds: CGRect(x: 2560 + 920, y: 1356, width: 720, height: 84),
+            statusBarHeight: 24
+        )
+        
+        XCTAssertEqual(offsetGeometry.displayID, 3)
+        XCTAssertFalse(offsetGeometry.isBuiltIn)
+        XCTAssertEqual(offsetGeometry.physicalNotchRect.minX, 3760)
+    }
 }

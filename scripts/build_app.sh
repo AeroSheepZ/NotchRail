@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-VERSION="0.0.2"
-BUILD_NUM="2"
+VERSION="0.0.3"
+BUILD_NUM="3"
 APP_NAME="NotchRail"
 BUILD_DIR=".build/release"
 APP_BUNDLE="build/${APP_NAME}.app"

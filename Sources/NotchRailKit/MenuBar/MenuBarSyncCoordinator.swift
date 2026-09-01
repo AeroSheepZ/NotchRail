@@ -6,33 +6,40 @@ extension Notification.Name {
     public static let menuBarSnapshotUpdated = Notification.Name("NotchRail.MenuBarSnapshotUpdated")
 }
 
-/// 负责监听系统工作区事件、调度后台 AX 扫描并发布菜单栏最新快照
+/// 负责监听系统工作区事件、调度多屏极速扫描并发布全量就绪（数据+图标）快照
 @MainActor
 public final class MenuBarSyncCoordinator: ObservableObject {
     public static let shared = MenuBarSyncCoordinator()
     
     @Published public private(set) var latestSnapshot: MenuBarSnapshot?
+    @Published public private(set) var allDiscoveredItems: [MenuBarItem] = []
     @Published public private(set) var isScanning: Bool = false
+    
+    private var discoveredItemsMap: [String: MenuBarItem] = [:]
+    private var snapshotsByDisplay: [CGDirectDisplayID: MenuBarSnapshot] = [:]
     
     private var debounceTimer: Timer?
     private var heartbeatTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
-    /// 扫描进行期间收到的新同步请求（如跨屏切换）暂存于此，完成后立即补扫，
-    /// 避免 `isScanning` 互斥导致事件被静默丢弃、快照长期停留在上一屏幕。
     private var pendingResync: Bool = false
     
     private init() {
         setupSystemObservers()
     }
     
+    /// 获取指定屏幕的最新预热快照
+    public func snapshot(for displayID: CGDirectDisplayID) -> MenuBarSnapshot? {
+        return snapshotsByDisplay[displayID]
+    }
+    
     /// 启动工作区监听与自动同步
     public func start() {
         stop()
         
-        // 1. 立即执行一次初始扫描
+        // 1. 立即执行一次全屏极速扫描与预热
         scheduleSync(immediate: true)
         
-        // 2. 启动 5.0s 空闲低频退避心跳，仅在系统无事件通知时作为保底对齐，极低 CPU 消耗
+        // 2. 启动 5.0s 空闲退避心跳
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.scheduleSync(immediate: false)
@@ -48,7 +55,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         heartbeatTimer = nil
     }
     
-    /// 安排一次扫描任务（支持 200ms 防抖）
+    /// 安排一次扫描任务（支持 100ms 敏捷防抖）
     public func scheduleSync(immediate: Bool = false) {
         debounceTimer?.invalidate()
         debounceTimer = nil
@@ -56,7 +63,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         if immediate {
             performSync()
         } else {
-            debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: false) { [weak self] _ in
+            debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: false) { [weak self] _ in
                 Task { @MainActor in
                     self?.performSync()
                 }
@@ -64,10 +71,8 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
     }
     
-    /// 执行后台扫描与快照计算
+    /// 执行后台扫描、多屏预热与图标同步解析
     private func performSync() {
-        // 已有扫描在进行：暂存请求，等当前扫描结束后立即补扫，
-        // 防止跨屏/应用启停等事件在互斥期间被丢弃。
         guard !isScanning else {
             pendingResync = true
             return
@@ -75,27 +80,65 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         isScanning = true
         pendingResync = false
         
-        let geometry = ScreenManager.shared.currentGeometry
+        let currentGeom = ScreenManager.shared.currentGeometry
+        let allGeometries = ScreenManager.shared.allGeometries
         let ignoredIDs = Set(PreferenceStore.shared.preferences.ignoredBundleIDs)
         
         Task {
-            let items = await MenuBarWindowScanner.shared.scanMenuBarItems(for: geometry)
-            let snapshot = OverflowCalculator.resolve(items: items, geometry: geometry, ignoredBundleIDs: ignoredIDs)
+            // 1. 极速扫描当前活动屏幕
+            let currentItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: currentGeom)
+            let currentSnapshot = OverflowCalculator.resolve(items: currentItems, geometry: currentGeom, ignoredBundleIDs: ignoredIDs)
+            
+            // 2. 立即同步预热当前屏幕的溢出图标（确保发布快照时第 0 帧即可呈现真实图标，消除加载占位）
+            if !currentSnapshot.overflowItems.isEmpty {
+                await IconResolver.shared.resolveIcons(for: currentSnapshot.overflowItems)
+            }
+            
+            // 3. 并行预热其他连接屏幕
+            var otherSnapshots: [CGDirectDisplayID: MenuBarSnapshot] = [:]
+            for otherGeom in allGeometries where otherGeom.displayID != currentGeom.displayID {
+                let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
+                let otherSnap = OverflowCalculator.resolve(items: otherItems, geometry: otherGeom, ignoredBundleIDs: ignoredIDs)
+                if !otherSnap.overflowItems.isEmpty {
+                    await IconResolver.shared.resolveIcons(for: otherSnap.overflowItems)
+                }
+                otherSnapshots[otherGeom.displayID] = otherSnap
+            }
             
             await MainActor.run {
-                // 仅当本次扫描对应的屏幕仍是当前活动屏幕时才更新快照；
-                // 跨屏瞬间启动的"旧屏幕扫描"晚到时直接丢弃，防止旧数据覆盖新屏幕。
-                if snapshot.displayID == ScreenManager.shared.currentGeometry.displayID {
-                    self.latestSnapshot = snapshot
-                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: snapshot)
+                // 4. 汇总所有屏幕发现的应用至全局注册池
+                self.registerDiscoveredItems(currentSnapshot.allItems)
+                for (_, otherSnap) in otherSnapshots {
+                    self.registerDiscoveredItems(otherSnap.allItems)
                 }
+                self.allDiscoveredItems = Array(self.discoveredItemsMap.values).sorted { ($0.title ?? "") < ($1.title ?? "") }
+                
+                // 5. 更新多屏快照池缓存
+                self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
+                for (dispID, snap) in otherSnapshots {
+                    self.snapshotsByDisplay[dispID] = snap
+                }
+                
+                // 6. 发布当前活动屏幕快照
+                if currentSnapshot.displayID == ScreenManager.shared.currentGeometry.displayID {
+                    self.latestSnapshot = currentSnapshot
+                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
+                }
+                
                 self.isScanning = false
                 
-                // 扫描期间有新的同步请求 → 立即补扫（串行执行，保证最终快照属于当前屏幕）
                 if self.pendingResync {
                     self.performSync()
                 }
             }
+        }
+    }
+    
+    /// 注册发现的菜单栏应用至全局汇聚池
+    private func registerDiscoveredItems(_ items: [MenuBarItem]) {
+        for item in items {
+            let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
+            self.discoveredItemsMap[key] = item
         }
     }
     

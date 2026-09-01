@@ -1,16 +1,22 @@
 import SwiftUI
+import AppKit
 
 /// 灵动岛根视图容器：基于单一流体底座（Morphing Base）驱动 Apple 级弹簧变形与分层级联入场
 public struct IslandRootView: View {
     @ObservedObject var screenManager = ScreenManager.shared
     @ObservedObject var stateMachine = IslandStateMachine.shared
     @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
+    @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject private var iconResolver = IconResolver.shared
     
     public init() {}
     
     public var body: some View {
-        let geometry = screenManager.currentGeometry
+        let prefs = preferenceStore.preferences
+        let geometry = (prefs.externalDisplayMode == .mainScreenOnly)
+            ? screenManager.primaryGeometry
+            : screenManager.currentGeometry
+        
         let snapshot = syncCoordinator.latestSnapshot
         let snapshotIsCurrent = (snapshot?.displayID == geometry.displayID)
         let overflowItems = snapshotIsCurrent ? (snapshot?.overflowItems ?? []) : []
@@ -92,6 +98,13 @@ public struct IslandRootView: View {
                 .frame(width: currentWidth, height: currentHeight, alignment: .top)
             }
             .contentShape(NotchShape(bottomCornerRadius: currentCornerRadius))
+            .onTapGesture {
+                let mode = preferenceStore.preferences.triggerMode
+                if mode == .click || mode == .hoverAndClick {
+                    triggerHaptic(.generic)
+                    stateMachine.toggleExpandCollapse(overflowCount: overflowItems.count)
+                }
+            }
             .onHover { isHovered in
                 if isHovered {
                     stateMachine.handleMouseEnter(overflowCount: overflowItems.count)
@@ -104,8 +117,6 @@ public struct IslandRootView: View {
         .animation(IslandTheme.Animation.FLUID_SPRING, value: isExpanded)
         .animation(IslandTheme.Animation.FLUID_SPRING, value: currentWidth)
         // 图标捕获仅在展开期间运行（gating：无可见消费者时不产生截图开销）
-        // 收起 → id 变 nil → 任务自动取消
-        // id 用 windowID（跨扫描周期稳定），避免每次快照刷新（UUID 变化）重启循环
         .task(id: isExpanded ? overflowItems.map(\.windowID) : nil) {
             guard isExpanded, !overflowItems.isEmpty else { return }
 
@@ -121,16 +132,26 @@ public struct IslandRootView: View {
         }
     }
     
+    /// 触觉震动反馈触发
+    private func triggerHaptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern = .generic) {
+        guard preferenceStore.preferences.enableHapticFeedback else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
+    }
+    
     /// 处理图标点击交互并返回执行结果
     private func handleItemTap(_ item: MenuBarItem) async -> Bool {
         let result = await MenuBarItemClicker.shared.performClick(for: item)
         switch result {
         case .success:
-            Task { @MainActor in
-                stateMachine.triggerCollapse()
+            triggerHaptic(.generic)
+            if preferenceStore.preferences.autoCollapseOnClick {
+                Task { @MainActor in
+                    stateMachine.triggerCollapse()
+                }
             }
             return true
         case .failure:
+            triggerHaptic(.alignment)
             return false
         }
     }

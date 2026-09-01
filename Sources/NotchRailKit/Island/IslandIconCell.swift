@@ -22,13 +22,13 @@ public struct IslandIconCell: View {
     // MARK: - 尺寸常量
 
     /// 图标显示高度（对齐原生菜单栏图标高度）
-    private static let iconHeight: CGFloat = 22
+    private static let ICON_HEIGHT: CGFloat = 22
     /// 单元格总高度（保持既有触控目标）
-    private static let cellHeight: CGFloat = 32
+    private static let CELL_HEIGHT: CGFloat = 32
     /// 单元格最小宽度（窄图标也保证可点）
-    private static let minCellWidth: CGFloat = 32
+    private static let MIN_CELL_WIDTH: CGFloat = 32
     /// 图标两侧的水平内边距（药丸内）
-    private static let pillHInset: CGFloat = 5
+    private static let PILL_H_INSET: CGFloat = 5
 
     public init(
         item: MenuBarItem,
@@ -61,7 +61,7 @@ public struct IslandIconCell: View {
 
     /// 图标显示尺寸：高度对齐、宽度按真实比例自适应
     private var displaySize: CGSize {
-        let height = Self.iconHeight
+        let height = Self.ICON_HEIGHT
         if let image = loadedImage, image.size.height > 0 {
             let ratio = image.size.width / image.size.height
             return CGSize(width: max(1, height * ratio), height: height)
@@ -75,7 +75,7 @@ public struct IslandIconCell: View {
 
     /// 单元格宽度（自适应内容，窄图标保底）
     private var cellWidth: CGFloat {
-        max(Self.minCellWidth, displaySize.width + Self.pillHInset * 2)
+        max(Self.MIN_CELL_WIDTH, displaySize.width + Self.PILL_H_INSET * 2)
     }
 
     // MARK: - 视图
@@ -96,7 +96,7 @@ public struct IslandIconCell: View {
                 contentView
                     .shadow(color: isHovered ? Color.white.opacity(0.2) : Color.clear, radius: 2, x: 0, y: 0)
             }
-            .frame(width: cellWidth, height: Self.cellHeight)
+            .frame(width: cellWidth, height: Self.CELL_HEIGHT)
             .contentShape(Rectangle())
             .modifier(ShakeEffect(shakes: shakeCount))
         }
@@ -164,8 +164,7 @@ public struct IslandIconCell: View {
         Task {
             let success = await onTap(item)
             if !success {
-                // 失败时触发轻量横向 Shake 抖动与触觉提示
-                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+                // 失败时触发轻量横向 Shake 抖动
                 withAnimation(.linear(duration: 0.25)) {
                     shakeCount += 1.0
                 }

@@ -316,5 +316,36 @@ public enum SpikeRunner {
         check(reloadedStore.preferences.hoverExpandDelayMs == 180.0, "Test 11: Persistent reload mismatch")
         check(reloadedStore.preferences.ignoredBundleIDs.contains("com.test.ignore"), "Test 11: Ignored bundle ID not preserved")
         print("   ✅ Case 11 通过: PreferenceStore UserDefaults JSON 编解码与持久化恢复验证通过")
+        
+        // Test 12: TriggerMode Click-only in IslandStateMachine
+        let clickSM = IslandStateMachine()
+        PreferenceStore.shared.update { $0.triggerMode = .click }
+        clickSM.handleMouseEnter(overflowCount: 5)
+        check(clickSM.currentState == .compact, "Test 12: Click-only mode should not expand on hover")
+        clickSM.toggleExpandCollapse(overflowCount: 5)
+        check(clickSM.currentState == .extended, "Test 12: toggleExpandCollapse should expand")
+        clickSM.toggleExpandCollapse()
+        check(clickSM.currentState == .compact, "Test 12: toggleExpandCollapse should collapse")
+        PreferenceStore.shared.update { $0.triggerMode = .hover }
+        print("   ✅ Case 12 通过: IslandStateMachine 多模式触发 (Click-Only & Hover) 隔离验证通过")
+        
+        // Test 13: PreferenceStore 0.0.3 Defaults & Reset
+        testStore.resetToDefaults()
+        check(testStore.preferences.triggerMode == .hover, "Test 13: Reset triggerMode mismatch")
+        check(testStore.preferences.externalDisplayMode == .followFocusedScreen, "Test 13: Reset externalDisplayMode mismatch")
+        check(testStore.preferences.autoCollapseOnClick == true, "Test 13: Reset autoCollapseOnClick mismatch")
+        check(testStore.preferences.enableHapticFeedback == true, "Test 13: Reset enableHapticFeedback mismatch")
+        check(testStore.preferences.showMenuBarIcon == true, "Test 13: Reset showMenuBarIcon mismatch")
+        print("   ✅ Case 13 通过: PreferenceStore resetToDefaults() 原子重置全部 0.0.3 偏好项通过")
+        
+        // Test 14: MenuBarSnapshot overflowCount property
+        let snapWithItems = MenuBarSnapshot(
+            displayID: 1,
+            allItems: [fallbackItem],
+            screenFrame: .zero,
+            notchRect: .zero
+        )
+        check(snapWithItems.overflowCount == snapWithItems.overflowItems.count, "Test 14: overflowCount property mismatch")
+        print("   ✅ Case 14 通过: MenuBarSnapshot.overflowCount 属性计算一致性验证通过")
     }
 }

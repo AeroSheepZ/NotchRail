@@ -31,6 +31,11 @@ public struct MenuBarSnapshot: Equatable, Sendable {
         allItems.filter { $0.displayMode == .overflowed }
     }
     
+    /// 溢出项总数
+    public var overflowCount: Int {
+        overflowItems.count
+    }
+    
     /// 原生仍可见的项
     public var visibleItems: [MenuBarItem] {
         allItems.filter { $0.displayMode == .nativeVisible }

@@ -36,10 +36,10 @@ public enum IslandTheme {
     
     // MARK: - 交互节奏与防抖 (Interaction Timing)
     public enum Timing {
-        /// 移入悬停意图防抖（60ms 极速敏捷跟手）
-        public static let HOVER_EXPAND_DELAY: TimeInterval = 0.06
-        /// 移出离开宽限期（220ms 舒适从容）
-        public static let COLLAPSE_DELAY: TimeInterval = 0.22
+        /// 移入悬停意图防抖（120ms 稳健防误触）
+        public static let HOVER_EXPAND_DELAY: TimeInterval = 0.12
+        /// 移出离开宽限期（300ms 舒适从容）
+        public static let COLLAPSE_DELAY: TimeInterval = 0.30
         /// 扩展热区向下延伸高度
         public static let HIT_TEST_BOTTOM_EXTENSION: CGFloat = 4.0
     }

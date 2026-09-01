@@ -37,5 +37,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         print("🚀 [NotchRail] 启动灵动岛吸顶常驻窗口与菜单栏自动同步服务...")
         IslandWindowCoordinator.shared.start()
         MenuBarSyncCoordinator.shared.start()
+        StatusItemManager.shared.start()
     }
 }

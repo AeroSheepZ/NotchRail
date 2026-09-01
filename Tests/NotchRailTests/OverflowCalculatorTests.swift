@@ -47,6 +47,7 @@ final class OverflowCalculatorTests: XCTestCase {
         
         XCTAssertEqual(snapshot.visibleItems.count, 2)
         XCTAssertEqual(snapshot.overflowItems.count, 0)
+        XCTAssertEqual(snapshot.overflowCount, 0)
         XCTAssertEqual(snapshot.visibleItems[0].displayMode, .nativeVisible)
         XCTAssertEqual(snapshot.visibleItems[1].displayMode, .nativeVisible)
     }
@@ -75,6 +76,7 @@ final class OverflowCalculatorTests: XCTestCase {
         
         XCTAssertEqual(snapshot.visibleItems.count, 0)
         XCTAssertEqual(snapshot.overflowItems.count, 3)
+        XCTAssertEqual(snapshot.overflowCount, 3)
         XCTAssertEqual(snapshot.overflowItems[0].displayMode, .overflowed)
         XCTAssertEqual(snapshot.overflowItems[1].displayMode, .overflowed)
         XCTAssertEqual(snapshot.overflowItems[2].displayMode, .overflowed)
@@ -95,6 +97,7 @@ final class OverflowCalculatorTests: XCTestCase {
         )
         
         XCTAssertEqual(snapshot.overflowItems.count, 0)
+        XCTAssertEqual(snapshot.overflowCount, 0)
         XCTAssertEqual(snapshot.visibleItems.count, 0)
         XCTAssertEqual(snapshot.allItems.first?.displayMode, .ignored)
     }
@@ -115,7 +118,16 @@ final class OverflowCalculatorTests: XCTestCase {
         let borderSnapshot = OverflowCalculator.resolve(items: [exactBorderItem, justInsideNotchItem], geometry: mockGeometry)
         XCTAssertEqual(borderSnapshot.visibleItems.count, 1)
         XCTAssertEqual(borderSnapshot.overflowItems.count, 1)
+        XCTAssertEqual(borderSnapshot.overflowCount, 1)
         XCTAssertEqual(borderSnapshot.visibleItems.first?.title, "BorderExact")
         XCTAssertEqual(borderSnapshot.overflowItems.first?.title, "BorderInside")
+    }
+    
+    func testEmptyItemsList() {
+        let emptySnapshot = OverflowCalculator.resolve(items: [], geometry: mockGeometry)
+        XCTAssertEqual(emptySnapshot.allItems.count, 0)
+        XCTAssertEqual(emptySnapshot.overflowItems.count, 0)
+        XCTAssertEqual(emptySnapshot.overflowCount, 0)
+        XCTAssertEqual(emptySnapshot.visibleItems.count, 0)
     }
 }

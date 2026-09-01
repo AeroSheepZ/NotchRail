@@ -11,12 +11,38 @@ public final class IslandWindowCoordinator: ObservableObject {
     
     private var panel: IslandPanel?
     private var cancellables = Set<AnyCancellable>()
+    private var lastActiveDisplayID: CGDirectDisplayID?
     
     private init() {
         // 监听当前屏幕几何变更（含多屏切换），平滑迁移视口锚点
         ScreenManager.shared.$currentGeometry
-            .sink { [weak self] newGeometry in
-                self?.handleGeometryChanged(newGeometry)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyDisplayAndVisibilityRules()
+            }
+            .store(in: &cancellables)
+            
+        // 监听偏好变动（多屏模式、空状态隐藏等）
+        NotificationCenter.default.publisher(for: .preferencesChanged)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyDisplayAndVisibilityRules()
+            }
+            .store(in: &cancellables)
+            
+        // 监听菜单栏快照刷新（检查溢出项数量）
+        NotificationCenter.default.publisher(for: .menuBarSnapshotUpdated)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyDisplayAndVisibilityRules()
+            }
+            .store(in: &cancellables)
+            
+        // 监听状态机展开/收起变化
+        IslandStateMachine.shared.$currentState
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyDisplayAndVisibilityRules()
             }
             .store(in: &cancellables)
     }
@@ -41,10 +67,12 @@ public final class IslandWindowCoordinator: ObservableObject {
         panel.setFrame(viewportBounds, display: true)
         
         self.panel = panel
-        panel.orderFrontRegardless()
+        self.lastActiveDisplayID = geometry.displayID
         
         // 启动全局鼠标跨屏焦点追踪
         MouseMonitor.shared.startMonitoring()
+        
+        applyDisplayAndVisibilityRules()
     }
     
     /// 计算覆盖灵动岛全展开区域的稳定透明视口区域
@@ -56,29 +84,89 @@ public final class IslandWindowCoordinator: ObservableObject {
         return CGRect(x: viewportX, y: viewportY, width: viewportWidth, height: viewportHeight)
     }
     
-    /// 调整灵动岛窗口物理区域（仅在屏幕物理参数改变或跨屏时调用）
-    public func setWindowFrame(_ frame: CGRect, animate: Bool = false) {
+    /// 综合应用多显示器策略与 0 溢出自动隐藏规则
+    public func applyDisplayAndVisibilityRules() {
         guard let panel = self.panel else { return }
-        panel.setFrame(frame, display: true)
-    }
-    
-    /// 响应屏幕几何变更或多屏焦点迁移
-    private func handleGeometryChanged(_ geometry: NotchGeometry) {
-        guard let panel = self.panel else { return }
-        let targetViewport = calculateViewportBounds(for: geometry)
         
-        panel.setFrame(targetViewport, display: true)
-        panel.orderFrontRegardless()
-        panel.contentView?.needsDisplay = true
-    }
-    
-    /// 隐藏窗口
-    public func hide() {
-        panel?.orderOut(nil)
-    }
-    
-    /// 重新显示窗口
-    public func show() {
-        panel?.orderFrontRegardless()
+        let prefs = PreferenceStore.shared.preferences
+        let currentGeom = ScreenManager.shared.currentGeometry
+        let mainGeom = ScreenManager.shared.primaryGeometry
+        
+        // 1. 判断多显示器策略
+        let effectiveGeom: NotchGeometry
+        var shouldHideForExternal = false
+        
+        switch prefs.externalDisplayMode {
+        case .followFocusedScreen:
+            effectiveGeom = currentGeom
+        case .mainScreenOnly:
+            effectiveGeom = mainGeom
+        case .disabled:
+            if currentGeom.displayID != mainGeom.displayID && !currentGeom.hasPhysicalNotch {
+                shouldHideForExternal = true
+            }
+            effectiveGeom = currentGeom
+        }
+        
+        if shouldHideForExternal {
+            panel.orderOut(nil)
+            return
+        }
+        
+        // 2. 检查目标屏幕多屏预热快照
+        let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: effectiveGeom.displayID)
+            ?? MenuBarSyncCoordinator.shared.latestSnapshot
+        let hasNoOverflow = (targetSnapshot?.overflowCount ?? 0) == 0
+        let isScreenSwitching = (lastActiveDisplayID != nil && lastActiveDisplayID != effectiveGeom.displayID)
+        self.lastActiveDisplayID = effectiveGeom.displayID
+        
+        // 3. 仅在切屏至无溢出屏幕且开启自动隐藏时，重置收起展开态（不阻断在同屏的主动展开）
+        if isScreenSwitching && prefs.hideWhenNoOverflow && hasNoOverflow {
+            if IslandStateMachine.shared.currentState.isExpanded {
+                IslandStateMachine.shared.triggerCollapse()
+            }
+        }
+        
+        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && hasNoOverflow && !isExpanded
+        
+        let targetViewport = calculateViewportBounds(for: effectiveGeom)
+        
+        if shouldHideForNoOverflow {
+            panel.ignoresMouseEvents = true
+            // 切屏时先在原屏立即置 0 透明度，再迁移坐标，彻底杜绝闪烁残影
+            if isScreenSwitching {
+                panel.alphaValue = 0.0
+                if panel.frame != targetViewport {
+                    panel.setFrame(targetViewport, display: true)
+                }
+            } else {
+                if panel.frame != targetViewport {
+                    panel.setFrame(targetViewport, display: true)
+                }
+                if panel.alphaValue > 0.0 {
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = 0.20
+                        panel.animator().alphaValue = 0.0
+                    }
+                } else {
+                    panel.alphaValue = 0.0
+                }
+            }
+        } else {
+            panel.ignoresMouseEvents = false
+            if panel.frame != targetViewport {
+                panel.setFrame(targetViewport, display: true)
+            }
+            panel.orderFrontRegardless()
+            if panel.alphaValue < 1.0 {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.20
+                    panel.animator().alphaValue = 1.0
+                }
+            } else {
+                panel.alphaValue = 1.0
+            }
+        }
     }
 }

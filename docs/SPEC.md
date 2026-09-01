@@ -1,86 +1,142 @@
-# Specification: NotchRail - Extended Menu Bar for MacBook Notch
+# Specification: NotchRail 0.0.3 - Settings System & Interaction Polish
 
 ## Problem Statement
 
-MacBook models equipped with a camera notch significantly constrain horizontal screen space in the macOS top menu bar. As users install essential status bar utilities (e.g., cloud sync tools, developer clients, communication apps, system monitors), the menu bar runs out of horizontal room to the right of the notch.
+While NotchRail (v0.0.2) successfully established a zero-tampering, window-level extended menu bar via SkyLight window enumeration, direct window bitmap capture, and `CGEvent` click routing, user interaction and configuration options remained rigid:
 
-When space is exhausted, macOS silently hides or pushes these overflowed menu bar items off-screen. Users cannot see them, click them, or monitor their dynamic status, effectively locking them out of background applications without an intuitive recovery mechanism.
+1. **Inflexible Island Triggering**: The island only expanded via hover with a fixed timing model. Users who prefer explicit click activation or who frequently navigate near the top edge suffered from accidental expansions or lack of click-to-open capability.
+2. **Missing Interaction Toggles**: Post-click behavior was strictly hardcoded to collapse, haptic feedback was uncustomizable, and the compact pill persistently occupied space even when no items were hidden behind the notch.
+3. **Multi-Display Rigidity**: External non-notch displays unconditionally spawned an island that followed the cursor, without allowing users to restrict NotchRail strictly to their built-in MacBook display or disable it on external monitors.
+4. **Settings UI Gaps & Incomplete Controls**: The initial settings window lacked live permission re-validation, app search/filtering for blacklist configuration, manual bundle ID entry, and a dependable, prominent way to cleanly quit the application.
+5. **No Menu Bar Auxiliary Status Extra**: When running in agent mode (`LSUIElement = true`), users had no persistent tray icon to access settings, initiate re-scans, or safely exit without opening the expanded island.
 
 ## Solution
 
-NotchRail provides a pure, non-invasive extended menu bar hosted directly beneath the MacBook notch (and rendered with a unified top-adhering notch aesthetic on external or non-notch displays).
+NotchRail 0.0.3 delivers a comprehensive **Settings Architecture & Interaction Polish Suite**:
 
-Operating strictly as an extended mirror, NotchRail does not tamper with native menu bar items using spacers or force-hide hacks. It enumerates all status bar items via window-level SkyLight APIs and determines which items have overflowed past the notch boundary. When the user moves their cursor over the notch with a deliberate pause (100–150ms), NotchRail smoothly unfolds with spring physics into an Extended Menu Bar displaying exclusively the obscured, overflowed items.
-
-For display and interaction:
-1. **Window-Level Screen Capture**: Captures crisp, live pixel images directly by `CGWindowID` using `CGWindowListCreateImageFromArray`, completely bypassing physical notch occlusion.
-2. **Direct Event Routing**: Synthesizes native mouse clicks targeted directly at the item's `windowID` and host process (`postToPid`), bringing up the original application menu natively without relying on fragile `AXPress` accessibility actions.
+1. **Multi-Mode Island Triggers (`TriggerMode`)**:
+   - `.hover`: Native hover with customizable debounce delay (50–300ms).
+   - `.click`: Hover disabled; expansion toggles explicitly upon clicking the compact pill.
+   - `.hoverAndClick`: Fast-path expansion on hover, with immediate click-to-toggle support.
+2. **Granular Interaction & Visibility Controls**:
+   - `autoCollapseOnClick`: Configurable auto-collapse upon successfully dispatching a click to an overflowed item.
+   - `enableHapticFeedback`: Haptic vibration feedback via `NSHapticFeedbackManager` during icon clicks and shake failure states.
+   - `hideWhenNoOverflow`: Option to completely hide the compact pill when all menu bar items fit natively on screen.
+3. **External Display Strategy (`ExternalDisplayMode`)**:
+   - `.followFocusedScreen`: Island dynamically follows key window focus and active screen clicks across displays (default).
+   - `.mainScreenOnly`: Island strictly anchors to the primary / built-in notch display.
+   - `.disabled`: Island is disabled on external non-notch monitors.
+4. **Native Auxiliary Status Item (`StatusItemManager`)**:
+   - Optional system status bar icon (`tray.full.fill`) providing quick actions: Toggle Island, Rescan Menu Bar, Preferences (⌘,), and Quit NotchRail (⌘Q).
+5. **Full-Featured Settings & Diagnostics Experience**:
+   - Live status reflection for Accessibility and Screen Recording permissions with instant refresh.
+   - App blacklist manager with fuzzy search, running status badges, manual Bundle ID addition, and one-click clear.
+   - Explicit "Quit NotchRail" action with system exit coordination (`NSApplication.shared.terminate`).
+   - "Reset to Recommended Defaults" button.
 
 ## User Stories
 
-1. As a MacBook user with many status bar utilities, I want NotchRail to automatically identify which menu bar items are hidden by the notch, so that I never lose access to my background tools.
-2. As a user, I want the compact pill island to sit neatly inside my MacBook notch without blocking content, so that it feels like an authentic native macOS feature.
-3. As a user with an external monitor without a physical notch, I want NotchRail to appear with the exact same top-adhering notch styling at the top of the active display, so that my visual experience is unified across screens.
-4. As a user working in a multi-display setup, I want the active island to dynamically migrate to whichever display my mouse cursor is focused on (preserving expansion state if open), so that I don't have to look at another screen to access my menu bar.
-5. As a fast typist or UI navigator, I want the island to ignore rapid cursor swipes across the top of the screen (e.g., clicking browser tabs or IDE headers), so that I am not interrupted by accidental expansions.
-6. As a user hovering deliberately over the notch for 100~150ms, I want the island to smoothly animate open with a spring physics transition, so that I get immediate and delightful visual feedback.
-7. As a user viewing the expanded island, I want to see crisp, real-time pixel-accurate icons of my overflowed apps (captured by `windowID`), so that I can read dynamic badges, text, and statuses even if the native icon is physically behind the notch.
-8. As a user clicking an overflowed icon in the island, I want NotchRail to route a native mouse click directly to the target window and PID, so that the application's original menu pops up reliably.
-9. As a user clicking an unclickable system item, I want NotchRail to provide a subtle shake animation and haptic feedback without freezing or launching unwanted windows, so that I understand the failure without being disrupted.
-10. As a user whose background apps have large numbers of status items, I want NotchRail's scanner to enumerate menu bar windows via atomic SkyLight calls in sub-millisecond time, guaranteeing zero UI hitching.
-11. As a user moving my mouse away from the expanded island, I want a 250~350ms collapse grace period, so that small accidental mouse slips don't instantly close the menu.
-12. As a user operating across multiple Spaces or in full-screen apps, I want NotchRail's panel to seamlessly join all spaces without drifting or disappearing during Mission Control swipes, so that it remains accessible anywhere.
-13. As a user with specific apps I don't need in the island, I want to configure an ignored apps list in Settings, so that my extended menu bar stays clean and relevant.
-14. As a user who wants NotchRail available upon boot, I want a toggle to launch NotchRail automatically at login (`SMAppService`), so that I don't have to manually start it after restarting my Mac.
-15. As a privacy-conscious user, I want NotchRail to clearly state its two required permissions (Accessibility for click dispatching and Screen Recording for window capture), operating 100% locally without network telemetry.
-16. As a user waking my MacBook from sleep or reconnecting monitors, I want NotchRail to automatically recalculate display geometries and refresh the menu bar snapshot, so that the layout is always up to date.
-17. As a user whose menu bar apps are closed or newly opened, I want NotchRail to react to system workspace notifications and update the overflow list promptly, so that closed apps disappear and new apps appear.
-18. As a user on Retina and non-Retina displays, I want icon captures to automatically scale to the backing scale factor, so that icons look razor-sharp on 2x/3x screens.
+1. As a user who dislikes accidental hover triggers, I want to set the island trigger mode to "Click Only", so that the island expands strictly when I click the compact pill.
+2. As a user who prefers effortless hover discovery, I want to keep the trigger mode as "Hover", so that pausing my cursor over the notch expands the menu bar automatically.
+3. As a power user, I want the trigger mode "Hover or Click", so that I can either hover or click to immediately expand/collapse the island.
+4. As a user, I want clicking an overflowed icon to automatically collapse the island by default, so that I can immediately interact with the popped-up application menu.
+5. As a user who opens multiple utilities in succession, I want an option to disable "Auto-collapse on click", so that the island stays open after dispatching clicks.
+6. As a trackpad user, I want tactile haptic confirmation when clicking icons, so that I receive immediate physical feedback that an action was dispatched.
+7. As a user who values sensory customization, I want to toggle haptic feedback on or off in Settings.
+8. As a minimalist user, I want an option to automatically hide the compact pill when there are 0 overflowed items, so that my screen stays entirely clean when no icons are hidden.
+9. As a user on a multi-monitor desk setup, I want to restrict NotchRail to my built-in MacBook screen only, so that secondary monitors remain completely free of top overlays.
+10. As a user with multiple external displays, I want NotchRail to follow my mouse cursor across screens, so that overflowed utilities remain accessible regardless of which display is focused.
+11. As a user running NotchRail as a background agent (`LSUIElement`), I want an optional native menu bar status icon, so that I always have a stable access point to settings and actions.
+12. As a user clicking the menu bar status icon, I want a menu with options to Toggle Island, Rescan Menu Bar, Open Preferences, and Quit NotchRail.
+13. As a user, I want a prominent "Quit NotchRail" button in the Settings window and Menu Bar extra, so that I can cleanly and instantly terminate the app at any time.
+14. As a user granting Accessibility permissions in System Settings, I want NotchRail to instantly detect the authorization and show a green "Granted" badge without restarting the app.
+15. As a user granting Screen Recording permissions in System Settings, I want NotchRail to immediately reflect permission status and start capturing high-definition icon bitmaps.
+16. As a user managing dozens of background apps, I want a search bar in the "Apps" settings tab to quickly filter applications by name or Bundle Identifier.
+17. As a user with a specific background helper app that is not currently running, I want to manually type its Bundle ID into the blacklist, so that it will be hidden whenever it launches.
+18. As a user reviewing active apps in Settings, I want to see crisp application icons alongside their display state (Overflowed, Visible, Ignored), so that I can easily identify each tool.
+19. As a user who made custom timing changes, I want a "Reset to Defaults" button in the Timing tab, so that I can effortlessly revert to factory-calibrated spring and debounce parameters.
+20. As a user adjusting hover debounce between 50ms and 300ms, I want changes to immediately update the active state machine without requiring an app restart.
+21. As a user adjusting collapse grace delay between 150ms and 600ms, I want changes to take effect in real time.
+22. As a user launching NotchRail upon login, I want the `SMAppService` background service registration to sync flawlessly with the Settings toggle.
+23. As a user who wants to clear all ignored applications, I want a "Clear All Ignored Apps" button with confirmation, so that I can reset my blacklist in one click.
+24. As a user viewing the About tab, I want to see the accurate version number and build string fetched dynamically from the app bundle.
+25. As a developer/contributor, I want a direct link to the GitHub repository from the About tab to check for updates or report issues.
+26. As a user experiencing temporary display desynchronization, I want a "Rescan Menu Bar" button in Settings and the Tray menu to force an immediate SkyLight scan.
+27. As a user switching display resolutions or orientation, I want NotchRail to re-evaluate `ExternalDisplayMode` rules and reposition the panel seamlessly.
+28. As a user who hides the tray status icon, I want to still access Settings via the gear icon inside the expanded island or standard macOS `⌘,` keyboard shortcut.
+29. As a user upgrading from version 0.0.1/0.0.2, I want my existing preferences (ignored apps, delays) to migrate smoothly without data loss or corruption.
+30. As a user running automated tests, I want the full suite of preferences, state transitions, and overflow calculations to pass with zero regressions.
 
 ## Implementation Decisions
 
-- **Zero-Tampering Extended Mirror Architecture**: NotchRail operates strictly as a mirror and interaction bridge. It does not use `NSStatusItem.length` spacers or private layout manipulation to reorder native status items.
-- **Window-Level Enumeration (`MenuBarWindowScanner`)**: Rather than traversing slow and brittle Accessibility (`AXUIElement`) trees, NotchRail enumerates status bar items using SkyLight API (`CGSGetProcessMenuBarWindowList`) filtered by `layer == kCGStatusWindowLevel` (25). This reduces scanning time to < 2ms with zero permission overhead.
-- **Three-Tier Icon Pipeline (`IconResolver`)**:
-  1. *Tier 1 (Window-Level Real-time Screen Capture)*: Uses `CGWindowListCreateImageFromArray` with the item's `CGWindowID` to capture live pixels (gauges, dynamic numbers, text) even when physically hidden behind the notch.
-  2. *Tier 2 (Bundle Icon Fallback)*: Resolves `NSRunningApplication.icon` if window capture is unpermitted or unavailable.
-  3. *Tier 3 (SF Symbol + Name Fallback)*: Standardized system glyph and process name fallback if no image can be captured.
-- **Geometric Overflow Calculation**: `OverflowCalculator` determines overflow status by calculating item boundaries against the display's notch rectangle (`NotchGeometry`). Items whose horizontal footprint lies to the left of the notch's right edge (`minX < notchBounds.maxX`) are classified as `.overflowed`. Only overflowed items are rendered inside the extended island.
-- **Direct Event Routing (`MenuBarItemClicker`)**: Synthesizes `CGEvent` left-clicks configured with `.mouseEventWindowUnderMousePointer` and `eventTargetUnixProcessID`, posting directly via `postToPid(item.ownerPID)`. This provides 100% reliable native menu invocation.
-- **Floating Panel Hierarchy**: `IslandPanel` subclasses `NSPanel` configured with:
-  - `styleMask: [.borderless, .nonactivatingPanel]`
-  - `level: .screenSaver` (floating above regular windows and auxiliary full-screen contexts)
-  - `collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]`
-  - Transparent `NSHostingView` layer eliminating rectangular clipping artifacts.
-- **State Machine Transitions**:
+### 1. Unified Preferences Schema (`UserPreferences`)
+- Expanded `UserPreferences` struct conforming to `Codable`, `Equatable`, and `Sendable`:
+  - `triggerMode: TriggerMode` (`.hover`, `.click`, `.hoverAndClick`; default: `.hover`).
+  - `autoCollapseOnClick: Bool` (default: `true`).
+  - `enableHapticFeedback: Bool` (default: `true`).
+  - `hideWhenNoOverflow: Bool` (default: `false`).
+  - `externalDisplayMode: ExternalDisplayMode` (`.followFocusedScreen`, `.mainScreenOnly`, `.disabled`; default: `.followFocusedScreen`).
+  - `showMenuBarIcon: Bool` (default: `true`).
+  - `hoverExpandDelayMs: Double` (default: 120.0).
+  - `collapseDelayMs: Double` (default: 300.0).
+  - `ignoredBundleIDs: [String]` (default: `[]`).
+  - `launchAtLogin: Bool` (default: `false`).
+  - `skipScreenCapturePrompt: Bool` (default: `false`).
 
-```mermaid
-stateDiagram-v2
-    [*] --> Compact
-    Compact --> HoverPending : cursor enters trigger zone
-    HoverPending --> Extended : deliberate hover >= 120ms
-    HoverPending --> Compact : rapid swipe out (< 120ms)
-    Extended --> Collapsing : cursor leaves island
-    Collapsing --> Extended : cursor re-enters within 300ms
-    Collapsing --> Compact : grace timer expires (300ms)
-```
+### 2. State Machine & Trigger Mode Pathways (`IslandStateMachine`)
+- Extended state machine to support distinct trigger channels:
+  - When `triggerMode == .click`: `handleMouseEnter` does not initiate `debounceTimer`. The state remains `.compact` until an explicit tap event calls `toggleExpandCollapse()`.
+  - When `triggerMode == .hover`: Standard debounce hover workflow.
+  - When `triggerMode == .hoverAndClick`: Hover starts debounce timer, but tapping the compact pill triggers immediate transition to `.extended` or `.compact`.
+- Bi-directional reactive binding between `PreferenceStore` and `IslandStateMachine`.
 
-## Required System Permissions
+### 3. Native Auxiliary Tray Management (`StatusItemManager`)
+- Dedicated manager controlling an `NSStatusItem` in the macOS system status bar:
+  - Dynamically shows or hides based on `preferences.showMenuBarIcon`.
+  - Populates standard `NSMenu` with:
+    - Current status / Quick Expand toggle
+    - Immediate "Rescan Menu Bar" action
+    - "Preferences..." (opening `SettingsWindowCoordinator`)
+    - Separator
+    - "Quit NotchRail" (`NSApp.terminate(nil)`)
 
-| Permission | Purpose | Mechanism |
-| :--- | :--- | :--- |
-| **Accessibility** (`AXIsProcessTrusted`) | Synthesizing click events to target window | `CGEvent.postToPid` |
-| **Screen Recording** (`CGPreflightScreenCaptureAccess`) | Capturing window live bitmap by `windowID` | `CGWindowListCreateImageFromArray` |
+### 4. Settings Window Redesign (`SettingsView`)
+- Structured 4-tab modern macOS layout:
+  - **General**: Trigger Mode picker, auto-collapse toggle, haptic feedback toggle, hide-when-empty toggle, multi-display strategy picker, show tray icon toggle, launch at login toggle, and red-bordered "Quit NotchRail" button.
+  - **Timing & Dynamics**: Debounce slider (50–300ms), Collapse delay slider (150–600ms), and "Reset to Defaults" button.
+  - **Apps (Blacklist)**: Search bar filter, list of running items with bundle icons, title, bundle ID, display mode badges, blacklist toggles, manual Bundle ID input field, and "Clear All" button.
+  - **About & Health**: Live permission badges (Accessibility & Screen Recording) with refresh buttons, app icon & version metadata, GitHub repo button, and duplicate Quit button.
+
+### 5. Multi-Display Coordination (`IslandWindowCoordinator` & `ScreenManager`)
+- `IslandWindowCoordinator` observes `PreferenceStore.preferencesChanged`:
+  - If `externalDisplayMode == .mainScreenOnly` and current screen is not the primary screen, panel hides or stays anchored on `NSScreen.screens.first`.
+  - If `externalDisplayMode == .disabled` and current screen is external, panel stays hidden.
+  - If `hideWhenNoOverflow == true` and `snapshot.overflowCount == 0`, panel alpha smoothly animates to 0.
+
+## Testing Decisions
+
+- **Good Test Philosophy**: Focus strictly on observable behavioral contracts (preference encoding/decoding, fallback defaults, migration safety, state machine trigger transitions, and overflow blacklist calculation) without mocking internal UI views.
+- **Modules Tested**:
+  1. `PreferenceStoreTests`:
+     - Default values verification.
+     - JSON serialization & deserialization with legacy compatibility.
+     - `resetToDefaults()` correctness.
+     - Adding/removing ignored Bundle IDs.
+  2. `IslandStateMachineTests`:
+     - Hover trigger transitions under `.hover`, `.click`, and `.hoverAndClick` modes.
+     - Tap toggle transitions.
+     - Debounce cancellation on rapid mouse leave.
+  3. `OverflowCalculatorTests`:
+     - Verify blacklist filtering on overflow item partitioning.
+- **Prior Art**: Builds on existing `Tests/NotchRailTests/` suite.
 
 ## Out of Scope
 
-- Inserting Spacer items into the native macOS menu bar to force compression or hiding of visible items.
-- In-island replication or re-rendering of complex custom drop-down menu UIs (e.g. recreating Bluetooth devices or Sound output menus inside SwiftUI).
-- Manual drag-and-drop reordering of third-party native status bar icons.
-- Non-macOS operating systems (Windows / Linux).
+- Custom global hotkey daemon registration using low-level Carbon Event taps (deferred to 0.0.4+ to prevent conflicts with native Spotlight/Raycast).
+- Re-architecting SkyLight bridge or replacing `CGEvent.postToPid`.
+- Injecting third-party menu bar spacers.
 
 ## Further Notes
 
-- Target deployment: macOS 14.0+ (Sonoma, Sequoia, and beyond).
-- Architecture: Dual-target modular structure (`NotchRailKit` core library + `NotchRail` App executable).
-- App packaging: Configured with `LSUIElement = true` (Agent mode / Background accessory app without a persistent Dock icon).
+- Target Deployment: macOS 14.0+ (Sonoma / Sequoia).
+- Zero external package dependencies; uses native Swift, SwiftUI, AppKit, Combine, and CoreGraphics.

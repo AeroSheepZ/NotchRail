@@ -1,6 +1,6 @@
-# NotchRail · 领域模型设计规范 (Domain Model Specification - v2 Refined)
+# NotchRail · 领域模型设计规范 (Domain Model Specification - v0.0.3)
 
-本文档根据与架构师审问敲定的**窗口级扩展菜单栏镜像（Window-Level Extended Menu Bar Mirror）**架构，定义 NotchRail 系统的核心领域模型、实体边界、值对象、状态机生命周期与事件驱动机制。
+本文档定义 NotchRail 系统的核心领域模型、实体边界、值对象、配置体系、状态机生命周期与事件驱动机制。
 
 ---
 
@@ -54,15 +54,38 @@ classDiagram
         collapsing
     }
 
+    class TriggerMode {
+        <<enumeration>>
+        hover
+        click
+        hoverAndClick
+    }
+
+    class ExternalDisplayMode {
+        <<enumeration>>
+        followCursor
+        mainScreenOnly
+        disabled
+    }
+
     class UserPreferences {
-        +List~String~ ignoredBundleIDs
+        +TriggerMode triggerMode
+        +Bool autoCollapseOnClick
+        +Bool enableHapticFeedback
+        +Bool hideWhenNoOverflow
+        +ExternalDisplayMode externalDisplayMode
+        +Bool showMenuBarIcon
         +Double hoverExpandDelayMs
         +Double collapseDelayMs
+        +List~String~ ignoredBundleIDs
         +Bool launchAtLogin
+        +Bool skipScreenCapturePrompt
     }
 
     MenuBarSnapshot "1" *-- "*" MenuBarItem : contains
     NotchGeometry --> MenuBarSnapshot : bounds & overflow calculation
+    UserPreferences --> TriggerMode : configures
+    UserPreferences --> ExternalDisplayMode : configures
 ```
 
 ---
@@ -111,7 +134,37 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
 }
 ```
 
-### 2.2 图标解析与降级模型 (`ResolvedIcon`)
+### 2.2 用户偏好与交互枚举 (`UserPreferences`)
+
+```swift
+public enum TriggerMode: String, Codable, CaseIterable, Sendable {
+    case hover          // 悬停防抖触发（默认）
+    case click          // 仅点击胶囊展开/收起
+    case hoverAndClick  // 悬停或点击均可触发
+}
+
+public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
+    case followCursor   // 随鼠标焦点跨屏迁移（默认）
+    case mainScreenOnly // 仅锚定于主显示器/内置刘海屏
+    case disabled       // 在外接显示器上完全禁用
+}
+
+public struct UserPreferences: Codable, Equatable, Sendable {
+    public var triggerMode: TriggerMode
+    public var autoCollapseOnClick: Bool
+    public var enableHapticFeedback: Bool
+    public var hideWhenNoOverflow: Bool
+    public var externalDisplayMode: ExternalDisplayMode
+    public var showMenuBarIcon: Bool
+    public var hoverExpandDelayMs: Double
+    public var collapseDelayMs: Double
+    public var ignoredBundleIDs: [String]
+    public var launchAtLogin: Bool
+    public var skipScreenCapturePrompt: Bool
+}
+```
+
+### 2.3 图标解析模型 (`ResolvedIcon`)
 ```swift
 public struct ResolvedIcon: Sendable {
     public let image: NSImage?
@@ -127,7 +180,7 @@ public struct ResolvedIcon: Sendable {
 }
 ```
 
-### 2.3 菜单栏快照 (`MenuBarSnapshot`)
+### 2.4 菜单栏快照 (`MenuBarSnapshot`)
 代表特定显示器上菜单栏扫描后的状态聚合，内置溢出计算结果。
 
 ```swift
@@ -151,67 +204,34 @@ public struct MenuBarSnapshot: Equatable, Sendable {
 }
 ```
 
-### 2.4 显示与刘海几何描述 (`NotchGeometry`)
-```swift
-public struct NotchGeometry: Equatable, Sendable {
-    public let displayID: CGDirectDisplayID
-    public let displayName: String
-    public let isBuiltIn: Bool
-    public let hasPhysicalNotch: Bool
-    public let scaleFactor: CGFloat
-    public let screenFrame: CGRect
-    public let visibleFrame: CGRect
-    public let safeAreaInsets: NSEdgeInsets
-    public let physicalNotchRect: CGRect
-    public let compactBounds: CGRect         // 胶囊态窗口 Bounds (约 172x36pt)
-    public let extendedBounds: CGRect        // 展开态窗口 Bounds (约 720x84pt)
-    public let statusBarHeight: CGFloat
-}
-```
-
 ---
 
-## 3. 核心处理管道 (Core Pipeline)
-
-```mermaid
-flowchart LR
-    A[MenuBarWindowScanner<br/>CGS 窗口枚举] --> B[OverflowCalculator<br/>几何碰撞溢出计算]
-    B --> C[IconResolver<br/>按 windowID 截取像素位图]
-    C --> D[ExtendedMenuBarView<br/>灵动岛单行平铺渲染]
-    D --> E[MenuBarItemClicker<br/>CGEvent.postToPid 原生点击]
-```
-
-1. **枚举**：`MenuBarWindowScanner` 调用 SkyLight 私有 API `CGSGetProcessMenuBarWindowList` 获取状态栏层级所有窗口及 frame。
-2. **计算**：`OverflowCalculator` 对比 `item.nativeFrame.minX < geometry.physicalNotchRect.maxX` 判定受阻项。
-3. **渲染**：`IconResolver` 优先调用 `CGWindowListCreateImageFromArray` 提取实时位图，传递给 `IslandIconCell` 单行排布。
-4. **交互**：用户点击图标时，`MenuBarItemClicker` 向目标 PID 发送带有目标 `windowID` 的 `CGEvent`，唤出原生菜单。
-
----
-
-## 4. 状态机设计 (IslandStateMachine)
+## 3. 状态机驱动多通道触发 (`IslandStateMachine`)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Compact : 启动完成
+    [*] --> Compact : 启动就绪
 
-    Compact --> HoverPending : 鼠标进入刘海感应区
-    HoverPending --> Extended : 停顿达到 120ms 防抖阈值
-    HoverPending --> Compact : 快速划过离开 (< 120ms)
+    Compact --> HoverPending : [TriggerMode == .hover / .hoverAndClick] 鼠标进入热区
+    HoverPending --> Extended : 停顿达到防抖延迟 (默认 120ms)
+    HoverPending --> Compact : 划过移出 (< 120ms)
 
-    Extended --> Extended : 点击图标 (触发点击交互)
+    Compact --> Extended : [TriggerMode == .click / .hoverAndClick] 点击胶囊
+    Extended --> Compact : 点击胶囊 / 点击图标(autoCollapse) / 菜单栏托盘切换
+
     Extended --> Collapsing : 鼠标移出灵动岛
-    Collapsing --> Extended : 300ms 宽限期内鼠标重新移入
-    Collapsing --> Compact : 宽限期计时器结束 (300ms)
+    Collapsing --> Extended : 宽限期内鼠标重新移入
+    Collapsing --> Compact : 宽限期计时器到期 (默认 300ms)
 ```
 
 ---
 
-## 5. 领域事件 (Domain Events)
+## 4. 领域事件广播矩阵 (Domain Events)
 
 | 事件名称 | 触发时机 | 负载数据 (Payload) | 主要监听者 |
 | :--- | :--- | :--- | :--- |
-| `MenuBarSnapshotUpdated` | 后台窗口扫描与几何计算完成 | `snapshot: MenuBarSnapshot` | `IslandRootView`, `ExtendedMenuBarView` |
+| `MenuBarSnapshotUpdated` | 后台窗口扫描与几何计算完成 | `snapshot: MenuBarSnapshot` | `IslandRootView`, `StatusItemManager` |
 | `ActiveDisplayChanged` | 鼠标跨屏移动至新显示器 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager` |
 | `NotchGeometryChanged` | 显示器插拔或分辨率变化 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager` |
-| `PreferencesChanged` | 用户设置（延迟、忽略名单等）变动 | `preferences: UserPreferences` | `MenuBarSyncCoordinator`, `IslandStateMachine` |
+| `PreferencesChanged` | 用户设置（打开方式、外接屏模式、延迟、黑名单等）变动 | `preferences: UserPreferences` | `IslandStateMachine`, `IslandWindowCoordinator`, `StatusItemManager` |
 | `PermissionStatusChanged` | 辅助功能或屏幕录制权限授予状态变化 | `isGranted: Bool` | `PermissionWindowCoordinator`, `SettingsView` |
