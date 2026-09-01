@@ -48,15 +48,15 @@ public final class IconResolver: ObservableObject {
     // MARK: - 常量
 
     /// 内存缓存上限（LRU 驱逐）
-    private nonisolated static let maxCacheSize = 200
+    private nonisolated static let MAX_CACHE_SIZE = 200
     /// 拉黑前最大失败次数
-    private nonisolated static let maxFailuresBeforeBlacklist = 3
+    private nonisolated static let MAX_FAILURES_BEFORE_BLACKLIST = 3
     /// 黑名单冷却时长（秒）
-    private nonisolated static let blacklistCooldownSeconds: TimeInterval = 30
+    private nonisolated static let BLACKLIST_COOLDOWN_SECONDS: TimeInterval = 30
     /// macOS 实际可能出现的 backing scale
-    private nonisolated static let plausibleBackingScales: [CGFloat] = [1, 2, 3]
+    private nonisolated static let PLAUSIBLE_BACKING_SCALES: [CGFloat] = [1, 2, 3]
     /// scale 匹配容差
-    private nonisolated static let scaleTolerance: CGFloat = 0.05
+    private nonisolated static let SCALE_TOLERANCE: CGFloat = 0.05
 
     // MARK: - 内部状态
 
@@ -242,8 +242,8 @@ public final class IconResolver: ObservableObject {
         let now = Date()
         var keys = Set<String>()
         for (key, failed) in failedCaptures
-        where failed.failureCount >= Self.maxFailuresBeforeBlacklist
-            && now.timeIntervalSince(failed.lastFailureTime) < Self.blacklistCooldownSeconds {
+        where failed.failureCount >= Self.MAX_FAILURES_BEFORE_BLACKLIST
+            && now.timeIntervalSince(failed.lastFailureTime) < Self.BLACKLIST_COOLDOWN_SECONDS {
             keys.insert(key)
         }
         return keys
@@ -255,7 +255,7 @@ public final class IconResolver: ObservableObject {
         failedCaptures[key] = FailedCapture(failureCount: count, lastFailureTime: Date())
 
         // 顺带清理过期失败记录
-        let cutoff = Date().addingTimeInterval(-Self.blacklistCooldownSeconds)
+        let cutoff = Date().addingTimeInterval(-Self.BLACKLIST_COOLDOWN_SECONDS)
         failedCaptures = failedCaptures.filter { $0.value.lastFailureTime > cutoff }
     }
 
@@ -269,8 +269,8 @@ public final class IconResolver: ObservableObject {
     }
 
     private func evictIfNeeded() {
-        guard cache.count > Self.maxCacheSize else { return }
-        let removeCount = cache.count - Self.maxCacheSize
+        guard cache.count > Self.MAX_CACHE_SIZE else { return }
+        let removeCount = cache.count - Self.MAX_CACHE_SIZE
         var evicted = 0
         while evicted < removeCount, !accessOrder.isEmpty {
             let key = accessOrder.removeFirst()
@@ -389,7 +389,7 @@ public final class IconResolver: ObservableObject {
 
     /// 校验反推的捕获倍率是否落在真实 backing scale 上
     private nonisolated static func validatedScale(_ derived: CGFloat) -> CGFloat? {
-        Self.plausibleBackingScales.first { abs(derived - $0) <= Self.scaleTolerance }
+        Self.PLAUSIBLE_BACKING_SCALES.first { abs(derived - $0) <= Self.SCALE_TOLERANCE }
     }
 
     // MARK: - 调试

@@ -25,18 +25,21 @@ public struct IslandTopBar: View {
 
     public var body: some View {
         HStack {
-            // 左侧常态指示：黄色图标与溢出数量徽标
-            HStack(spacing: 4) {
-                Image(systemName: "tray.full.fill")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(IslandTheme.ColorPalette.TRAY_YELLOW)
+            // 左侧常态指示：黄色图标与溢出数量徽标（紧凑态下精准置于动态左耳翼可视发光区域）
+            if overflowCount > 0 || isSyncing {
+                HStack(spacing: 4) {
+                    Image(systemName: "tray.full.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(IslandTheme.ColorPalette.TRAY_YELLOW)
 
-                countArea
+                    countArea
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(IslandTheme.ColorPalette.CAPSULE_BACKGROUND)
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(IslandTheme.ColorPalette.CAPSULE_BACKGROUND)
-            .clipShape(Capsule())
 
             Spacer()
 
@@ -54,10 +57,13 @@ public struct IslandTopBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("偏好设置")
-                .transition(.opacity)
+                .transition(.scale.combined(with: .opacity))
             }
         }
+        .padding(.leading, 6)
+        .padding(.trailing, 6)
         .animation(.easeOut(duration: 0.2), value: showsSettingsButton)
+        .animation(.easeOut(duration: 0.2), value: overflowCount > 0)
     }
 
     /// 数量展示区：同步中 → 脉动占位；可信 → 数字（变化时平滑滚动）
@@ -91,6 +97,9 @@ public struct IslandTopBar: View {
         .animation(.easeOut(duration: 0.3), value: overflowCount)
     }
 
-    /// 数字区宽度（按两位数等宽字体预留，1↔2 位数切换时胶囊宽度稳定）
-    private var digitAreaWidth: CGFloat { 14 }
+    /// 数字区宽度（按实际数字位数动态分配等宽宽度）
+    private var digitAreaWidth: CGFloat {
+        let countString = "\(overflowCount)"
+        return CGFloat(max(1, countString.count)) * 7.5 + 2.5
+    }
 }

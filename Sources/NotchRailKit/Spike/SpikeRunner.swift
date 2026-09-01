@@ -142,7 +142,7 @@ public enum SpikeRunner {
             statusBarHeight: 34
         )
         
-        // Test 1: Native visible
+        // 测试 1: 原生可见项判定
         let wifi = MenuBarItem(
             processIdentifier: 101,
             bundleIdentifier: "com.apple.controlcenter",
@@ -154,7 +154,7 @@ public enum SpikeRunner {
         check(snapshot1.overflowItems.count == 0, "Test 1: Overflow item count mismatch")
         print("   ✅ Case 1 通过: 刘海右侧图标正确判定为 nativeVisible")
         
-        // Test 2: Overflowed
+        // 测试 2: 溢出项判定
         let raycast = MenuBarItem(
             processIdentifier: 202,
             bundleIdentifier: "com.raycast.macos",
@@ -166,7 +166,7 @@ public enum SpikeRunner {
         check(snapshot2.overflowItems.count == 1, "Test 2: Overflow item count mismatch")
         print("   ✅ Case 2 通过: 刘海遮挡/左侧图标正确判定为 overflowed")
         
-        // Test 3: Ignored
+        // 测试 3: 忽略黑名单判定
         let ignoredItem = MenuBarItem(
             processIdentifier: 303,
             bundleIdentifier: "com.hidden.app",
@@ -178,7 +178,7 @@ public enum SpikeRunner {
         check(snapshot3.allItems.first?.displayMode == .ignored, "Test 3: Display mode not ignored")
         print("   ✅ Case 3 通过: 忽略名单中的项正确标记为 ignored")
         
-        // Test 4: Virtual Geometry
+        // 测试 4: 外接屏幕虚拟锚点几何判定
         let extScreenFrame = CGRect(x: 0, y: 0, width: 3840, height: 2160)
         let extVisibleFrame = CGRect(x: 0, y: 0, width: 3840, height: 2136)
         let extNotchRect = CGRect(x: (3840 - 160) / 2, y: 2160 - 34, width: 160, height: 34)

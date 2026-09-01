@@ -4,7 +4,9 @@ import SwiftUI
 import Combine
 
 /// 协调 IslandPanel 窗口的创建、布局锚定与显示隐藏及跨屏动态迁移
-/// 采用 boring.notch 黄金视口架构：窗口常驻稳定透明视口，流体形变全部由 SwiftUI GPU 渲染，彻底消除 OS 窗口跳动
+/// 采用 boring.notch 黄金视口架构 + 像素级异形几何 Hit-Test 穿透双重体系：
+/// 1. 视口层：窗口在屏幕顶部保持绝对稳固常驻（高度为 EXTENDED_HEIGHT 84pt），展开/收起时绝不频繁调整原生窗口物理 Frame，彻底消除 OS 窗口弹跳与跳跃。
+/// 2. 交互层：IslandHostingView 精准根据实时形态裁剪 hitTest，紧凑态仅响应顶部 32pt 刘海，下方与两侧透明区域 100% 物理穿透，绝不遮挡底层应用（如 Chrome）。
 @MainActor
 public final class IslandWindowCoordinator: ObservableObject {
     public static let shared = IslandWindowCoordinator()
@@ -56,7 +58,7 @@ public final class IslandWindowCoordinator: ObservableObject {
         
         let panel = IslandPanel(contentRect: viewportBounds)
         let rootView = IslandRootView()
-        let hostingView = NSHostingView(rootView: rootView)
+        let hostingView = IslandHostingView(rootView: rootView)
         
         // 强制图层背景完全透明，防止 macOS 渲染默认灰色直角背景
         hostingView.wantsLayer = true
@@ -75,10 +77,10 @@ public final class IslandWindowCoordinator: ObservableObject {
         applyDisplayAndVisibilityRules()
     }
     
-    /// 计算覆盖灵动岛全展开区域的稳定透明视口区域
+    /// 计算覆盖灵动岛全展开区域的稳定透明视口区域（吸顶居中）
     private func calculateViewportBounds(for geometry: NotchGeometry) -> CGRect {
-        let viewportWidth = min(geometry.screenFrame.width * 0.90, 860.0)
-        let viewportHeight: CGFloat = 110.0
+        let viewportWidth = min(geometry.screenFrame.width * 0.85, 800.0)
+        let viewportHeight: CGFloat = IslandTheme.Dimension.EXTENDED_HEIGHT
         let viewportX = geometry.screenFrame.minX + (geometry.screenFrame.width - viewportWidth) / 2.0
         let viewportY = geometry.screenFrame.maxY - viewportHeight
         return CGRect(x: viewportX, y: viewportY, width: viewportWidth, height: viewportHeight)
@@ -102,7 +104,7 @@ public final class IslandWindowCoordinator: ObservableObject {
         case .mainScreenOnly:
             effectiveGeom = mainGeom
         case .disabled:
-            if currentGeom.displayID != mainGeom.displayID && !currentGeom.hasPhysicalNotch {
+            if !currentGeom.hasPhysicalNotch && !currentGeom.isBuiltIn {
                 shouldHideForExternal = true
             }
             effectiveGeom = currentGeom
@@ -116,7 +118,8 @@ public final class IslandWindowCoordinator: ObservableObject {
         // 2. 检查目标屏幕多屏预热快照
         let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: effectiveGeom.displayID)
             ?? MenuBarSyncCoordinator.shared.latestSnapshot
-        let hasNoOverflow = (targetSnapshot?.overflowCount ?? 0) == 0
+        let overflowCount = targetSnapshot?.overflowCount ?? 0
+        let hasNoOverflow = overflowCount == 0
         let isScreenSwitching = (lastActiveDisplayID != nil && lastActiveDisplayID != effectiveGeom.displayID)
         self.lastActiveDisplayID = effectiveGeom.displayID
         

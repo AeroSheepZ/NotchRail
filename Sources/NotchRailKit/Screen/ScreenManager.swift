@@ -134,13 +134,10 @@ public final class ScreenManager: ObservableObject {
             notchRect = CGRect(x: virtualX, y: virtualY, width: virtualWidth, height: virtualHeight)
         }
         
-        // Compact 胶囊尺寸（不对称扩展：左侧延伸100pt完整容纳黄色徽标+图标+数值；
-        // 右侧零延伸——与刘海右缘平齐，不遮挡原生菜单栏图标，设置入口在展开态顶栏）
-        let leftExtension: CGFloat = 100.0
-        let rightExtension: CGFloat = 0.0
-        let compactWidth: CGFloat = notchRect.width + leftExtension + rightExtension
-        let compactHeight: CGFloat = notchRect.height
-        let compactX: CGFloat = notchRect.minX - leftExtension
+        // 基准 Compact 胶囊尺寸（无溢出时严格 1:1 对齐物理刘海，高度精准对齐状态栏高度）
+        let compactWidth: CGFloat = notchRect.width
+        let compactHeight: CGFloat = statusBarHeight
+        let compactX: CGFloat = notchRect.minX
         let compactY: CGFloat = screenFrame.maxY - compactHeight
         let compactBounds = CGRect(
             x: compactX,

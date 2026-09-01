@@ -163,7 +163,15 @@ public struct IslandIconCell: View {
     private func triggerAction() {
         Task {
             let success = await onTap(item)
-            if !success {
+            let enableHaptic = PreferenceStore.shared.preferences.enableHapticFeedback
+            if success {
+                if enableHaptic {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                }
+            } else {
+                if enableHaptic {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+                }
                 // 失败时触发轻量横向 Shake 抖动
                 withAnimation(.linear(duration: 0.25)) {
                     shakeCount += 1.0

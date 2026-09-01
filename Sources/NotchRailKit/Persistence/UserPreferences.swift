@@ -55,6 +55,16 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     /// 用户是否已选择跳过「屏幕录制权限」引导
     public var skipScreenCapturePrompt: Bool
     
+    /// 悬停防抖时延 (秒)
+    public var hoverExpandDuration: TimeInterval {
+        hoverExpandDelayMs / 1000.0
+    }
+    
+    /// 移出收起宽限时延 (秒)
+    public var collapseDuration: TimeInterval {
+        collapseDelayMs / 1000.0
+    }
+    
     public init(
         triggerMode: TriggerMode = .hover,
         autoCollapseOnClick: Bool = true,

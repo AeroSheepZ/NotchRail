@@ -242,7 +242,14 @@ public struct SettingsView: View {
                 .padding(.vertical, 4)
                 
                 HStack {
+                    Button("恢复全部出厂设置") {
+                        showResetAlert = true
+                    }
+                    .controlSize(.small)
+                    .foregroundColor(.orange)
+                    
                     Spacer()
+                    
                     Button("恢复出厂推荐时延") {
                         preferenceStore.update {
                             $0.hoverExpandDelayMs = IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0
@@ -532,8 +539,8 @@ public struct SettingsView: View {
                     Text("NotchRail")
                         .font(.title3.weight(.bold))
                     
-                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.3"
-                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.4"
+                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
                     Text("Extended Menu Bar for MacBook Notch · v\(version) (\(build))")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -542,43 +549,21 @@ public struct SettingsView: View {
                 
                 // 权限健康卡片
                 VStack(spacing: 8) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("辅助功能权限 (Accessibility)")
-                                .font(.subheadline.weight(.medium))
-                            Text("用于派发原生菜单栏点击事件")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        permissionStatusBadge(granted: permissionManager.isAccessibilityGranted)
-                        Button("去授权") {
-                            permissionManager.openSystemSettings()
-                        }
-                        .controlSize(.small)
+                    permissionCard(
+                        title: "辅助功能权限 (Accessibility)",
+                        subtitle: "用于派发原生菜单栏点击事件",
+                        isGranted: permissionManager.isAccessibilityGranted
+                    ) {
+                        permissionManager.openSystemSettings()
                     }
-                    .padding(10)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(8)
                     
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("屏幕录制权限 (Screen Recording)")
-                                .font(.subheadline.weight(.medium))
-                            Text("用于按 windowID 截取高清实时图标")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        permissionStatusBadge(granted: permissionManager.isScreenCaptureGranted)
-                        Button("去授权") {
-                            permissionManager.openScreenCaptureSettings()
-                        }
-                        .controlSize(.small)
+                    permissionCard(
+                        title: "屏幕录制权限 (Screen Recording)",
+                        subtitle: "用于按 windowID 截取高清实时图标",
+                        isGranted: permissionManager.isScreenCaptureGranted
+                    ) {
+                        permissionManager.openScreenCaptureSettings()
                     }
-                    .padding(10)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(8)
                 }
                 
                 // 快捷操作按钮组
@@ -643,5 +628,30 @@ public struct SettingsView: View {
             .background(Color.orange.opacity(0.12))
             .clipShape(Capsule())
         }
+    }
+    
+    @ViewBuilder
+    private func permissionCard(
+        title: String,
+        subtitle: String,
+        isGranted: Bool,
+        onAction: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            permissionStatusBadge(granted: isGranted)
+            Button("去授权", action: onAction)
+                .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
     }
 }

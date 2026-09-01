@@ -22,12 +22,19 @@ public struct IslandRootView: View {
         let overflowItems = snapshotIsCurrent ? (snapshot?.overflowItems ?? []) : []
         let isExpanded = stateMachine.currentState.isExpanded
         
-        // 动态尺寸计算（紧凑与展开态宽度、高度、圆角）
-        let compactWidth = geometry.compactBounds.width
+        // 动态尺寸与耳翼计算
+        let dynamicCompactBounds = geometry.dynamicCompactBounds(for: overflowItems.count, isSyncing: !snapshotIsCurrent)
+        let compactWidth = dynamicCompactBounds.width
+        let compactHeight = geometry.statusBarHeight
         let dynamicWidth = geometry.dynamicExtendedBounds(for: max(1, overflowItems.count)).width
+        
         let currentWidth = isExpanded ? dynamicWidth : compactWidth
-        let currentHeight = isExpanded ? IslandTheme.Dimension.EXTENDED_HEIGHT : IslandTheme.Dimension.COMPACT_HEIGHT
+        let currentHeight = isExpanded ? IslandTheme.Dimension.EXTENDED_HEIGHT : compactHeight
         let currentCornerRadius = isExpanded ? IslandTheme.CornerRadius.EXTENDED_BOTTOM : IslandTheme.CornerRadius.COMPACT_BOTTOM
+        
+        // 计算紧凑态相对刘海中心的水平偏移（左耳翼延伸，右侧平齐）
+        let leftWing = isExpanded ? 0.0 : IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: !snapshotIsCurrent)
+        let horizontalOffset = -leftWing / 2.0
         
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
@@ -37,7 +44,7 @@ public struct IslandRootView: View {
                 
                 // 2. 灵动岛内部内容层（分层级联渲染）
                 VStack(spacing: 6) {
-                    // 顶部栏：徽章常驻；设置齿轮仅展开态显示（极简态胶囊右侧与刘海平齐不遮挡原生图标）
+                    // 顶部栏：徽章常驻左耳翼；设置齿轮仅展开态显示
                     IslandTopBar(
                         overflowCount: overflowItems.count,
                         isSyncing: !snapshotIsCurrent,
@@ -46,9 +53,9 @@ public struct IslandRootView: View {
                             SettingsWindowCoordinator.shared.showSettings()
                         }
                     )
-                    .padding(.horizontal, isExpanded ? 14 : 7)
+                    .padding(.horizontal, isExpanded ? 8 : 0)
                     .padding(.top, isExpanded ? 8 : 0)
-                    .frame(height: IslandTheme.Dimension.COMPACT_HEIGHT)
+                    .frame(height: compactHeight)
                     
                     // 下层展开内容区：图标水平滚动列表或空状态提示
                     if isExpanded {
@@ -75,84 +82,91 @@ public struct IslandRootView: View {
                                             IslandIconCell(
                                                 item: item,
                                                 state: iconResolver.iconStates[item.iconCacheKey] ?? .pending,
-                                                onTap: { itm in
-                                                    await handleItemTap(itm)
+                                                onTap: { targetItem in
+                                                    let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem)
+                                                    switch clickResult {
+                                                    case .success:
+                                                        if preferenceStore.preferences.autoCollapseOnClick {
+                                                            IslandStateMachine.shared.triggerCollapse()
+                                                        }
+                                                        return true
+                                                    case .failure:
+                                                        return false
+                                                    }
                                                 }
                                             )
                                         }
                                     }
                                     .padding(.horizontal, 14)
+                                    .padding(.vertical, 2)
                                 }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .padding(.bottom, 6)
+                                .frame(height: 38)
                             }
                         }
                         .transition(
                             .asymmetric(
-                                insertion: .opacity.combined(with: .offset(y: -8)),
-                                removal: .opacity.combined(with: .offset(y: -6))
+                                insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top)),
+                                removal: .opacity
                             )
                         )
                     }
                 }
-                .frame(width: currentWidth, height: currentHeight, alignment: .top)
+                .frame(width: currentWidth, height: currentHeight)
             }
-            .contentShape(NotchShape(bottomCornerRadius: currentCornerRadius))
-            .onTapGesture {
-                let mode = preferenceStore.preferences.triggerMode
-                if mode == .click || mode == .hoverAndClick {
-                    triggerHaptic(.generic)
-                    stateMachine.toggleExpandCollapse(overflowCount: overflowItems.count)
+            .offset(x: horizontalOffset)
+            .animation(IslandTheme.Animation.FLUID_SPRING, value: currentWidth)
+            .animation(IslandTheme.Animation.FLUID_SPRING, value: currentHeight)
+            .animation(IslandTheme.Animation.FLUID_SPRING, value: horizontalOffset)
+            .contentShape(Rectangle())
+            .onHover { isHovered in
+                handleHover(isHovered, overflowCount: overflowItems.count)
+            }
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    handleTap(overflowCount: overflowItems.count)
+                }
+            )
+            .task {
+                // 首次加载或屏幕切换时预先解析图标
+                if !overflowItems.isEmpty {
+                    await iconResolver.resolveIcons(for: overflowItems)
                 }
             }
-            .onHover { isHovered in
-                if isHovered {
-                    stateMachine.handleMouseEnter(overflowCount: overflowItems.count)
-                } else {
-                    stateMachine.handleMouseLeave()
+            .onChange(of: overflowItems) { newItems in
+                // 溢出项变更时增量刷新图标
+                if !newItems.isEmpty {
+                    Task {
+                        await iconResolver.resolveIcons(for: newItems)
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(IslandTheme.Animation.FLUID_SPRING, value: isExpanded)
-        .animation(IslandTheme.Animation.FLUID_SPRING, value: currentWidth)
-        // 图标捕获仅在展开期间运行（gating：无可见消费者时不产生截图开销）
-        .task(id: isExpanded ? overflowItems.map(\.windowID) : nil) {
-            guard isExpanded, !overflowItems.isEmpty else { return }
-
-            // 首轮立即解析（首见项先出占位，截图落地后只更新变化项）
-            await IconResolver.shared.resolveIcons(for: overflowItems)
-
-            // 展开期间周期性刷新（时钟 / 电池等动态图标保持鲜活）
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard !Task.isCancelled else { break }
-                await IconResolver.shared.resolveIcons(for: overflowItems)
-            }
+    }
+    
+    // MARK: - 交互触发分发 (Hover & Click 隔离及 HoverAndClick 复合支持)
+    
+    private func handleHover(_ isHovered: Bool, overflowCount: Int) {
+        let prefs = preferenceStore.preferences
+        // 允许 hover 与 hoverAndClick 模式触发悬停防抖
+        guard prefs.triggerMode == .hover || prefs.triggerMode == .hoverAndClick else { return }
+        
+        if isHovered {
+            IslandStateMachine.shared.handleMouseEnter(overflowCount: overflowCount)
+        } else {
+            IslandStateMachine.shared.handleMouseLeave()
         }
     }
     
-    /// 触觉震动反馈触发
-    private func triggerHaptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern = .generic) {
-        guard preferenceStore.preferences.enableHapticFeedback else { return }
-        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
-    }
-    
-    /// 处理图标点击交互并返回执行结果
-    private func handleItemTap(_ item: MenuBarItem) async -> Bool {
-        let result = await MenuBarItemClicker.shared.performClick(for: item)
-        switch result {
-        case .success:
-            triggerHaptic(.generic)
-            if preferenceStore.preferences.autoCollapseOnClick {
-                Task { @MainActor in
-                    stateMachine.triggerCollapse()
-                }
-            }
-            return true
-        case .failure:
-            triggerHaptic(.alignment)
-            return false
+    private func handleTap(overflowCount: Int) {
+        let prefs = preferenceStore.preferences
+        // 允许 click 与 hoverAndClick 模式触发点击即时展开/收起
+        guard prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick else { return }
+        
+        if IslandStateMachine.shared.currentState.isExpanded {
+            IslandStateMachine.shared.triggerCollapse()
+        } else {
+            IslandStateMachine.shared.triggerExpand(overflowCount: overflowCount)
         }
     }
 }

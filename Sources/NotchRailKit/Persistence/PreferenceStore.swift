@@ -10,7 +10,7 @@ extension Notification.Name {
 public final class PreferenceStore: ObservableObject {
     public static let shared = PreferenceStore()
     
-    private let storageKey = "com.notchrail.NotchRail.preferences"
+    private static let STORAGE_KEY = "com.notchrail.NotchRail.preferences"
     private let userDefaults: UserDefaults
     
     @Published public var preferences: UserPreferences {
@@ -22,7 +22,7 @@ public final class PreferenceStore: ObservableObject {
     
     public init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        if let data = userDefaults.data(forKey: storageKey) {
+        if let data = userDefaults.data(forKey: Self.STORAGE_KEY) {
             do {
                 self.preferences = try JSONDecoder().decode(UserPreferences.self, from: data)
             } catch {
@@ -38,7 +38,7 @@ public final class PreferenceStore: ObservableObject {
     private func save() {
         do {
             let encoded = try JSONEncoder().encode(preferences)
-            userDefaults.set(encoded, forKey: storageKey)
+            userDefaults.set(encoded, forKey: Self.STORAGE_KEY)
         } catch {
             print("❌ [NotchRail] UserPreferences 序列化持久化失败: \(error)")
         }

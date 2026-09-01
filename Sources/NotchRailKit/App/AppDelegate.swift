@@ -17,6 +17,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         
+        setupMainMenu()
+        
         // 检查辅助功能 / 屏幕录制权限：任一未授权（且未跳过过屏幕录制引导）则进入引导
         let isGranted = PermissionManager.shared.checkAccessibility(prompt: false)
         let scGranted = PermissionManager.shared.checkScreenCapture(prompt: false)
@@ -30,6 +32,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             self.startMainServices()
         }
+    }
+    
+    /// 设置标准 macOS 应用菜单（保证即使隐藏托盘图标，⌘, 与 ⌘Q 依然生效）
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        
+        let appMenu = NSMenu(title: "NotchRail")
+        let prefsItem = NSMenuItem(title: "偏好设置...", action: #selector(handleOpenPreferences), keyEquivalent: ",")
+        prefsItem.target = self
+        appMenu.addItem(prefsItem)
+        
+        appMenu.addItem(NSMenuItem.separator())
+        
+        let quitItem = NSMenuItem(title: "退出 NotchRail", action: #selector(handleQuitApp), keyEquivalent: "q")
+        quitItem.target = self
+        appMenu.addItem(quitItem)
+        
+        appMenuItem.submenu = appMenu
+        NSApp.mainMenu = mainMenu
+    }
+    
+    @objc private func handleOpenPreferences() {
+        SettingsWindowCoordinator.shared.showSettings()
+    }
+    
+    @objc private func handleQuitApp() {
+        NSApplication.shared.terminate(nil)
     }
     
     /// 启动 NotchRail 主核心服务

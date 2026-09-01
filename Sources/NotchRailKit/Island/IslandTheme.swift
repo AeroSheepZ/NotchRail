@@ -19,7 +19,7 @@ public enum IslandTheme {
     
     // MARK: - 基础几何尺寸 (Dimensions)
     public enum Dimension {
-        public static let COMPACT_HEIGHT: CGFloat = 34.0
+        public static let COMPACT_HEIGHT: CGFloat = 32.0
         public static let EXTENDED_HEIGHT: CGFloat = 84.0
         public static let TOP_BAR_HEIGHT: CGFloat = 32.0
     }
