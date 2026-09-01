@@ -21,21 +21,29 @@
 
 ## ✨ 核心特性
 
-- 🚀 **窗口级零侵入扫描**：通过 macOS SkyLight 窗口系统毫秒级精准扫描状态栏窗口层级（`kCGStatusWindowLevel`），耗时 `< 2ms`，零 UI 卡顿。
-- 🎨 **像素级高保真镜像**：多层级图标解析（Window Capture → Bundle Icon → SF Symbol），即使图标物理隐藏在刘海背后，也能通过 `CGWindowID` 实时截取动态变化（如上传进度、CPU占用数字、红点等）。
-- ⚡ **原生事件精准穿透路由**：点击灵动岛内的图标时，通过合成底层 `CGEvent` 精确分发至目标窗口与进程（`postToPid`），原生呼出原应用的下拉菜单。
-- 🪄 **悬停防误触与物理弹性动效**：
-  - 120ms 意图识别：快速划过刘海不误触展开；
-  - 300ms 离开缓冲（Grace Period）：鼠标轻微移出不会闪退；
+- 🚀 **微秒级极速扫描 (< 20ms)**：通过 macOS SkyLight 窗口系统与后台非阻塞异步辅助功能架构，毫秒级精准扫描状态栏窗口层级（`kCGStatusWindowLevel`），零 UI 卡顿。
+- 🎨 **像素级高保真镜像与第 0 帧就绪**：多层级图标解析（Window Capture → Bundle Icon → SF Symbol）。后台与快照原子化同步预热，展开灵动岛的瞬间**第 0 帧直接呈现高清真实图标**，彻底告别加载等待与占位闪烁。
+- ⚡ **原生事件精准穿透路由**：点击灵动岛内的图标时，通过合成底层 `CGEvent` 精确分发至目标窗口与进程（`postToPid`），原生唤起原应用的下拉菜单。
+- 🪄 **多模式触发与物理弹性动效**：
+  - **多通道触发方式**：支持「鼠标悬停（默认）」、「仅点击展开」、「悬停或点击」三种交互通道；
+  - **防误触时序**：120ms 移入意图识别（快速划过不误触）+ 300ms 离开缓冲（Grace Period）；
   - 遵循 Apple 物理弹簧阻尼动画曲线，宛如原生系统组件。
-- 🖥️ **多显示器自适应**：支持多屏协同，灵动岛跟随鼠标所在屏幕实时渲染；在外接显示器上自动呈现顶部居中原生胶囊锚点。
+- 🖥️ **多显示器聚焦自适应与零溢出隐藏**：
+  - 支持多屏协同，灵动岛智能跟随当前聚焦屏幕（`followFocusedScreen`）、仅主屏模式（`mainScreenOnly`）或外接屏禁用；
+  - **零溢出自动隐藏**：原生菜单栏无遮挡时自动隐藏胶囊，跨屏迁移先隐后迁，物理消除闪烁。
+- 🛠️ **全新现代化设置中心 (Settings)**：
+  - **常规**：触发方式、点击自动收起、触觉震动反馈、无溢出自动隐藏、多屏策略、托盘图标、开机自启与退出控制；
+  - **悬停与动效**：防抖与宽限时延精细滑块调节（50–300ms / 150–600ms）；
+  - **应用管理**：全局活动应用汇聚池、子序列模糊搜索（Fuzzy Search）、在岛内隐藏/展示开关、手动添加 Bundle ID 与一键清空黑名单；
+  - **关于与诊断**：辅助功能与屏幕录制权限实时检测、一键重扫与状态刷新。
+- 📥 **系统菜单栏常驻托盘 (`tray.full.fill`)**：提供一键开关灵动岛、重新扫描、偏好设置 (⌘,) 和退出 (⌘Q)。
 - 🔒 **100% 纯本地运行与隐私保护**：无任何网络通信、无第三方遥测追踪，代码完全开源。
 
 ---
 
 ## 🛠️ 系统要求
 
-- **操作系统**：macOS 14.0 (Sonoma) 或更高版本（已适配 macOS 15 Sequoia）
+- **操作系统**：macOS 14.0 (Sonoma) 或更高版本（已完美适配 macOS 15 Sequoia）
 - **硬件架构**：Apple Silicon (M1/M2/M3/M4 系列) 及 Intel 芯片机型
 
 ---
@@ -44,8 +52,8 @@
 
 ### 方式一：直接下载安装包（推荐）
 
-1. 前往 [GitHub Releases](https://github.com/AeroSheepZ/NotchRail/releases/latest) 下载最新版本的 `.dmg` 或 `.zip`。
-2. 双击打开 `NotchRail-v0.0.1.dmg`，将 **NotchRail** 拖入 **Applications (应用程序)** 文件夹。
+1. 前往 [GitHub Releases](https://github.com/AeroSheepZ/NotchRail/releases/latest) 下载最新版本（`v0.0.3`）的 `.dmg` 或 `.zip`。
+2. 双击打开 `NotchRail-v0.0.3.dmg`，将 **NotchRail** 拖入 **Applications (应用程序)** 文件夹。
 3. 在「应用程序」中启动 NotchRail。
 
 > **提示**：首次打开如遇 macOS Gatekeeper 提示未签名开发者：
@@ -76,7 +84,7 @@ open build/NotchRail.app
 | **辅助功能 (Accessibility)** | `AXIsProcessTrusted` / `CGEvent` | 用于将用户在灵动岛上的点击事件精准派发给对应目标应用 |
 | **屏幕录制 (Screen Recording)** | `CGWindowListCreateImageFromArray` | 用于捕获被刘海物理遮挡的菜单栏图标实时像素（仅本地内存捕获） |
 
-*首次启动时，应用会弹出权限指引面板协助您一键开启。*
+*首次启动时，应用会弹出权限指引面板协助您一键开启。可在「设置」→「关于与诊断」中随时查看与刷新授权状态。*
 
 ---
 
@@ -88,16 +96,18 @@ NotchRail 采用双 Target 模块化设计：
 NotchRail/
 ├── Sources/
 │   ├── NotchRailKit/               # 核心框架库
+│   │   ├── App/                    # AppDelegate 与 StatusItemManager 托盘管理
 │   │   ├── Bridging/               # SkyLight 底层私有 C 接口与窗口桥接
-│   │   ├── MenuBar/                # 状态栏窗口扫描、溢出判定与点击分发
-│   │   ├── Island/                 # 灵动岛 SwiftUI 视图、弹簧动画与状态机
-│   │   ├── Screen/                 # 屏幕几何尺寸与物理刘海边界检测
-│   │   ├── Window/                 # 悬浮 NSPanel 层级管理 (.screenSaver)
+│   │   ├── MenuBar/                # 状态栏扫描 (16ms)、溢出判定、异步 AX 与点击分发
+│   │   ├── Island/                 # 灵动岛 SwiftUI 视图、物理弹簧动画与状态机
+│   │   ├── Screen/                 # 屏幕几何尺寸、多屏焦点追踪与物理刘海检测
+│   │   ├── Window/                 # 悬浮 NSPanel 层级管理 (.screenSaver 视口架构)
+│   │   ├── Persistence/            # UserPreferences 模型与 PreferenceStore 持久化
 │   │   ├── Permissions/            # TCC 权限检测与引导
-│   │   └── Settings/               # 设置中心视图与偏好持久化
+│   │   └── Settings/               # 4 栏现代化设置中心视图与开机自启
 │   └── NotchRail/                  # 宿主 App 可执行文件入口
-├── tests/                          # 核心状态机与几何计算单元测试
-└── scripts/                        # 构建、打包与自动化脚本
+├── Tests/                          # 全量状态机、偏好持久化、多屏与溢出算法单元测试
+└── scripts/                        # 构建、打包与全套诊断自测脚本
 ```
 
 ---
