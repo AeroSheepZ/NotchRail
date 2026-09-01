@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# App Data / Local agent scratch
+.gemini/
+scratch/
+.scratch/
+
+# Internal research docs & session memory (local only, not for public repo)
+.workbuddy/
+docs/GRILL_AND_TECHNICAL_ANALYSIS.md
+docs/REFACTORING_PLAN.md
