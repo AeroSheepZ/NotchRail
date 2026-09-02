@@ -140,10 +140,11 @@ public final class IslandWindowCoordinator: ObservableObject {
         
         let isExpanded = IslandStateMachine.shared.currentState.isExpanded
         let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && hasNoOverflow && !isExpanded
+        let isFullScreenHidden = effectiveGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen
         
         let targetViewport = calculateViewportBounds(for: effectiveGeom)
         
-        if shouldHideForNoOverflow {
+        if isFullScreenHidden || shouldHideForNoOverflow {
             panel.ignoresMouseEvents = true
             // 切屏时先在原屏立即置 0 透明度，再迁移坐标，彻底杜绝闪烁残影
             if isScreenSwitching {
@@ -165,6 +166,7 @@ public final class IslandWindowCoordinator: ObservableObject {
                 }
             }
         } else {
+            panel.ignoresMouseEvents = false
             if isScreenSwitching {
                 panel.alphaValue = 0.0
                 if panel.frame != targetViewport {

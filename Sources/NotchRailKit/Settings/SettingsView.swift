@@ -10,9 +10,7 @@ public struct SettingsView: View {
     
     @State private var selectedTab: Int = 0
     @State private var searchText: String = ""
-    @State private var manualBundleID: String = ""
     @State private var showResetAlert: Bool = false
-    @State private var showClearBlacklistAlert: Bool = false
     @State private var isRefreshingPermissions: Bool = false
     
     public init() {}
@@ -55,15 +53,7 @@ public struct SettingsView: View {
                 preferenceStore.resetToDefaults()
             }
         } message: {
-            Text("所有触发模式、时延与黑名单规则都将被重置为出厂推荐配置。")
-        }
-        .alert("确定要清空所有黑名单规则吗？", isPresented: $showClearBlacklistAlert) {
-            Button("取消", role: .cancel) {}
-            Button("清空", role: .destructive) {
-                preferenceStore.clearAllIgnored()
-            }
-        } message: {
-            Text("已在灵动岛内隐藏的应用将全部恢复正常展示。")
+            Text("所有触发模式、动画时延与显示策略都将被重置为出厂推荐配置。")
         }
         .onAppear {
             let actualLaunchAtLogin = LaunchAtLoginManager.isEnabled
@@ -269,73 +259,107 @@ public struct SettingsView: View {
     // MARK: - Tab 3: 应用管理 (Apps)
     
     private var appsTab: some View {
-        VStack(spacing: 12) {
-            // 搜索过滤与手动添加
-            HStack(spacing: 8) {
-                HStack(spacing: 4) {
+        VStack(spacing: 14) {
+            // 1. 顶部现代化搜索与统计栏
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.45))
+                    
                     TextField("搜索应用名称或 Bundle ID...", text: $searchText)
                         .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.95))
+                    
                     if !searchText.isEmpty {
                         Button {
                             searchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
+                                .font(.system(size: 13))
+                                .foregroundColor(.white.opacity(0.45))
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(6)
-                .background(Color(NSColor.controlBackgroundColor))
-                .cornerRadius(6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                )
                 
-                HStack(spacing: 4) {
-                    TextField("手动输入 Bundle ID", text: $manualBundleID)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 170)
+                // 状态统计徽章
+                let allItems = filteredItems()
+                let overflowCount = allItems.filter { $0.isOverflowed }.count
+                HStack(spacing: 6) {
+                    Text("共 \(allItems.count) 项")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
                     
-                    Button("添加") {
-                        preferenceStore.addIgnored(bundleID: manualBundleID)
-                        manualBundleID = ""
+                    if overflowCount > 0 {
+                        Text("\(overflowCount) 溢出")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.18))
+                            .clipShape(Capsule())
                     }
-                    .disabled(manualBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.04))
+                )
             }
             
-            // 同步与预热中指示器（与灵动岛双端实时联动，统一矢量动效）
+            // 同步中呼吸微光条
             if syncCoordinator.isPrewarming {
                 HStack(spacing: 8) {
                     IslandSpinner()
                         .frame(width: 12, height: 12)
-                    Text("正在同步菜单栏快照与图标...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text("正在同步菜单栏快照与高清图标...")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.70))
                     Spacer()
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.black.opacity(0.2))
-                .cornerRadius(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.black.opacity(0.40))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
             }
             
-            // 应用列表
+            // 2. 应用列表卡片流
             let items = filteredItems()
             if items.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     Spacer()
-                    Image(systemName: "tray")
-                        .font(.system(size: 28))
-                        .foregroundColor(.secondary)
-                    Text(searchText.isEmpty ? "未发现活动的菜单栏应用" : "未找到匹配 \"\(searchText)\" 的应用")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    Image(systemName: "menubar.dock.rectangle")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundColor(.white.opacity(0.25))
+                    Text(searchText.isEmpty ? "当前屏幕暂无活动状态栏应用" : "未找到匹配 \"\(searchText)\" 的应用")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.50))
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.25))
-                .cornerRadius(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.25))
+                )
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
@@ -345,28 +369,47 @@ public struct SettingsView: View {
                     }
                     .padding(6)
                 }
-                .background(Color.black.opacity(0.25))
-                .cornerRadius(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.25))
+                )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                 )
             }
             
-            // 底部操作栏
+            // 3. 底部简洁提示与手动刷新
             HStack {
-                Text("已隐藏应用: \(preferenceStore.preferences.ignoredBundleIDs.count) 个")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange.opacity(0.8))
+                    Text("NotchRail 自动识别被刘海遮挡或挤出屏幕的菜单栏图标并实时镜像到灵动岛")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.45))
+                }
+                
                 Spacer()
                 
-                if !preferenceStore.preferences.ignoredBundleIDs.isEmpty {
-                    Button("清空所有黑名单规则") {
-                        showClearBlacklistAlert = true
+                Button {
+                    syncCoordinator.scheduleSync(immediate: true, showProgress: true)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("立即重扫")
+                            .font(.system(size: 11, weight: .medium))
                     }
-                    .controlSize(.small)
-                    .foregroundColor(.red)
                 }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
+                .foregroundColor(.white.opacity(0.85))
             }
         }
         .padding(.top, 4)
@@ -379,8 +422,6 @@ public struct SettingsView: View {
         let title: String
         let bundleID: String
         let isOverflowed: Bool
-        let isNativeVisible: Bool
-        let isIgnored: Bool
         let statusIcon: NSImage?
     }
     
@@ -404,8 +445,6 @@ public struct SettingsView: View {
             title: title,
             bundleID: bundleID,
             isOverflowed: item.displayMode == .overflowed,
-            isNativeVisible: item.displayMode == .nativeVisible,
-            isIgnored: item.displayMode == .ignored,
             statusIcon: statusImage
         )
     }
@@ -432,14 +471,10 @@ public struct SettingsView: View {
         
         // 3. 排序策略：
         //   - 第 1 梯队：溢出项（isOverflowed == true，岛内展示），置顶（按扫描物理顺序 originalIndex 升序）
-        //   - 第 2 梯队：原生可见项（!isIgnored && !isOverflowed，顶栏可见），倒序排布（originalIndex 降序）
-        //   - 第 3 梯队：已隐藏项（isIgnored == true）
+        //   - 第 2 梯队：原生可见项（!isOverflowed，顶栏可见），倒序排布（originalIndex 降序）
         result.sort { lhs, rhs in
             if lhs.isOverflowed != rhs.isOverflowed {
                 return lhs.isOverflowed && !rhs.isOverflowed
-            }
-            if lhs.isIgnored != rhs.isIgnored {
-                return !lhs.isIgnored && rhs.isIgnored
             }
             if lhs.isOverflowed && rhs.isOverflowed {
                 return lhs.originalIndex < rhs.originalIndex
@@ -498,73 +533,68 @@ public struct SettingsView: View {
                 } else {
                     Image(systemName: "menubar.rectangle")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.white.opacity(0.4))
                 }
             }
             .frame(width: containerWidth, height: 26)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
-                    .font(.subheadline.weight(.medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.92))
                 Text(entry.bundleID)
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.45))
             }
             
             Spacer()
             
-            // 状态徽标
-            if entry.isIgnored {
-                Text("已在岛内隐藏")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.red.opacity(0.15))
-                    .clipShape(Capsule())
-            } else if entry.isOverflowed {
-                Text("岛内展示 (溢出)")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.15))
-                    .clipShape(Capsule())
-            } else {
-                Text("原生可见")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundColor(.green.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.green.opacity(0.15))
-                    .clipShape(Capsule())
-            }
-            
-            // 操作按钮
-            if entry.isIgnored {
-                Button("取消隐藏") {
-                    preferenceStore.toggleIgnored(bundleID: entry.bundleID)
+            // 极简状态徽标
+            if entry.isOverflowed {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 5, height: 5)
+                    Text("岛内展示 (溢出)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.orange)
                 }
-                .controlSize(.small)
-                .buttonStyle(.borderedProminent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.orange.opacity(0.14))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.orange.opacity(0.30), lineWidth: 0.8)
+                )
+                .clipShape(Capsule())
             } else {
-                Button("在岛内隐藏") {
-                    preferenceStore.toggleIgnored(bundleID: entry.bundleID)
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.green.opacity(0.9))
+                        .frame(width: 5, height: 5)
+                    Text("原生可见")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.green.opacity(0.90))
                 }
-                .controlSize(.small)
-                .buttonStyle(.bordered)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.green.opacity(0.12))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.green.opacity(0.25), lineWidth: 0.8)
+                )
+                .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.white.opacity(0.04))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                .strokeBorder(Color.white.opacity(entry.isOverflowed ? 0.10 : 0.05), lineWidth: 1)
         )
     }
     
@@ -591,8 +621,8 @@ public struct SettingsView: View {
                     Text("NotchRail")
                         .font(.title3.weight(.bold))
                     
-                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.4"
-                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
+                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.5"
+                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "5"
                     Text("Extended Menu Bar for MacBook Notch · v\(version) (\(build))")
                         .font(.subheadline)
                         .foregroundColor(.secondary)

@@ -101,6 +101,18 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
                lhs.safeAreaInsets.right == rhs.safeAreaInsets.right
     }
 
+    /// 是否处于全屏应用空间（原生菜单栏被系统自动折叠隐藏）
+    public var isFullScreenSpace: Bool {
+        // 当可见区域顶部贴紧屏幕物理顶部（无菜单栏占位高度）时，即处于全屏应用空间
+        return visibleFrame.maxY >= screenFrame.maxY - 1.0
+    }
+
+    /// 检查指定坐标是否处于屏幕物理顶边缘唤醒热区
+    public func isPointInTopEdgeHotZone(_ point: CGPoint, threshold: CGFloat = 2.0) -> Bool {
+        guard point.x >= screenFrame.minX && point.x <= screenFrame.maxX else { return false }
+        return point.y >= screenFrame.maxY - threshold && point.y <= screenFrame.maxY + 5.0
+    }
+
     /// 根据当前溢出数量动态计算紧凑态几何边界
     /// 0 溢出时严格 1:1 贴合刘海物理尺寸；加载中或有溢出时左侧动态长出耳翼完全避开摄像头黑胶
     public func dynamicCompactBounds(for overflowCount: Int, isSyncing: Bool = false) -> CGRect {

@@ -36,13 +36,25 @@ public final class ScreenManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
-        let initialScreen = NSScreen.main ?? NSScreen.screens.first!
-        let initialGeom = ScreenManager.calculateGeometry(for: initialScreen)
+        let fallbackScreen = NSScreen.main ?? NSScreen.screens.first
+        let initialGeom: NotchGeometry
+        if let screen = fallbackScreen {
+            initialGeom = ScreenManager.calculateGeometry(for: screen)
+        } else {
+            initialGeom = ScreenManager.calculateGeometry(for: NSScreen())
+        }
         self.currentGeometry = initialGeom
         self.refreshAllScreens()
         
         // 监听屏幕参数变化（如显示器插拔、分辨率或旋转变更）
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in
+                self?.handleScreenParametersChanged()
+            }
+            .store(in: &cancellables)
+
+        // 监听活动 Space 切换（进入/退出全屏空间、桌面滑动）
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
             .sink { [weak self] _ in
                 self?.handleScreenParametersChanged()
             }
@@ -73,7 +85,7 @@ public final class ScreenManager: ObservableObject {
         if let focused = currentFocusedScreen, NSScreen.screens.contains(focused) {
             return focused
         }
-        return NSScreen.main ?? NSScreen.screens.first!
+        return NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
     }
     
     /// 由前台焦点变化或用户点击触发主动切换至目标屏幕
@@ -98,8 +110,9 @@ public final class ScreenManager: ObservableObject {
     }
     
     /// 解析特定屏幕的刘海几何数据
-    public func resolveGeometry(for screen: NSScreen = NSScreen.main ?? NSScreen.screens.first!) -> NotchGeometry {
-        return ScreenManager.calculateGeometry(for: screen)
+    public func resolveGeometry(for screen: NSScreen? = nil) -> NotchGeometry {
+        let targetScreen = screen ?? activeScreen()
+        return ScreenManager.calculateGeometry(for: targetScreen)
     }
     
     /// 根据 displayID 查询几何数据

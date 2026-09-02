@@ -1,4 +1,4 @@
-# NotchRail · 领域模型设计规范 (Domain Model Specification - v0.0.4)
+# NotchRail · 领域模型设计规范 (Domain Model Specification)
 
 本文档定义 NotchRail 系统的核心领域模型、实体边界、值对象、配置体系、状态机生命周期与事件驱动机制。
 
@@ -59,6 +59,8 @@ classDiagram
         +CGRect physicalNotchRect
         +CGRect compactBounds
         +CGRect extendedBounds
+        +Bool isFullScreenSpace
+        +isPointInTopEdgeHotZone(CGPoint, CGFloat) Bool
     }
 
     class IslandDisplayState {

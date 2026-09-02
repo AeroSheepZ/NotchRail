@@ -6,13 +6,16 @@ import Combine
 /// 全局前台焦点与点击跨屏监听器
 /// 基于真实点击与应用前台激活驱动跨屏迁移，杜绝随鼠标划过乱跳
 @MainActor
-public final class MouseMonitor {
+public final class MouseMonitor: ObservableObject {
     public static let shared = MouseMonitor()
+    
+    @Published public private(set) var isAwakenedInFullScreen: Bool = false
     
     private var globalMouseDownMonitor: Any?
     private var localMouseDownMonitor: Any?
     private var globalMouseMovedMonitor: Any?
     private var isMonitoring: Bool = false
+    private var fullScreenGraceTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     
     private init() {}
@@ -46,14 +49,14 @@ public final class MouseMonitor {
             }
         }
         
-        // 3. 监听前台活动应用程序切换通知（Key Window 屏幕变化）
+        // 4. 监听前台活动应用程序切换通知（Key Window 屏幕变化）
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)
             .sink { [weak self] _ in
                 self?.syncActiveScreen()
             }
             .store(in: &cancellables)
         
-        // 4. 监听活动空间/桌面切换通知（多屏 Space 切换第一响应通知）
+        // 5. 监听活动空间/桌面切换通知（多屏 Space 切换第一响应通知）
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
             .sink { [weak self] _ in
                 self?.syncActiveScreen()
@@ -65,6 +68,9 @@ public final class MouseMonitor {
     public func stopMonitoring() {
         guard isMonitoring else { return }
         isMonitoring = false
+        
+        fullScreenGraceTimer?.invalidate()
+        fullScreenGraceTimer = nil
         
         if let gm = globalMouseDownMonitor {
             NSEvent.removeMonitor(gm)
@@ -81,23 +87,78 @@ public final class MouseMonitor {
         cancellables.removeAll()
     }
     
-    /// 处理鼠标移动：当鼠标移出灵动岛活跃区域时，硬件级开启事件穿透，绝不遮挡底层 Chrome
+    /// 处理鼠标移动：全屏顶边缘唤醒 + 硬件级穿透判定
     private func handleMouseMove(at location: CGPoint) {
+        let prefs = PreferenceStore.shared.preferences
+        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
+        
+        // 1. 全屏沉浸协同：检测当前屏幕是否处于全屏空间
+        if geom.isFullScreenSpace {
+            let isTouchingTopEdge = geom.isPointInTopEdgeHotZone(location, threshold: 2.0)
+            
+            if isTouchingTopEdge {
+                fullScreenGraceTimer?.invalidate()
+                fullScreenGraceTimer = nil
+                if !isAwakenedInFullScreen {
+                    isAwakenedInFullScreen = true
+                    IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                }
+            } else if isAwakenedInFullScreen {
+                let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
+                    ?? MenuBarSyncCoordinator.shared.latestSnapshot
+                let overflowCount = targetSnapshot?.overflowCount ?? 0
+                let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+                let screenRect = geom.interactiveScreenRect(isExpanded: isExpanded, overflowCount: overflowCount)
+                
+                // 宽限判定：在灵动岛交互区或紧贴顶边缘 40pt 内
+                let topZone = CGRect(
+                    x: geom.screenFrame.minX,
+                    y: geom.screenFrame.maxY - 40.0,
+                    width: geom.screenFrame.width,
+                    height: 40.0
+                )
+                let isWithinInteractiveZone = NSMouseInRect(location, screenRect.insetBy(dx: -6, dy: -6), false) ||
+                                              NSMouseInRect(location, topZone, false)
+                
+                if isWithinInteractiveZone {
+                    fullScreenGraceTimer?.invalidate()
+                    fullScreenGraceTimer = nil
+                } else if fullScreenGraceTimer == nil {
+                    // 鼠标移出顶部与灵动岛交互区，启动 300ms 宽限平滑淡退
+                    fullScreenGraceTimer = Timer.scheduledTimer(withTimeInterval: 0.30, repeats: false) { [weak self] _ in
+                        Task { @MainActor in
+                            guard let self = self else { return }
+                            self.isAwakenedInFullScreen = false
+                            self.fullScreenGraceTimer = nil
+                            if IslandStateMachine.shared.currentState.isExpanded {
+                                IslandStateMachine.shared.triggerCollapse()
+                            }
+                            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                        }
+                    }
+                }
+            }
+        } else {
+            // 普通桌面空间，清理全屏唤醒态与计时器
+            if isAwakenedInFullScreen {
+                isAwakenedInFullScreen = false
+                fullScreenGraceTimer?.invalidate()
+                fullScreenGraceTimer = nil
+            }
+        }
+        
         let isExpanded = IslandStateMachine.shared.currentState.isExpanded
         if isExpanded {
             IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
             return
         }
         
-        let prefs = PreferenceStore.shared.preferences
-        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
-        
         let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
             ?? MenuBarSyncCoordinator.shared.latestSnapshot
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let hasNoOverflow = overflowCount == 0
         
-        if prefs.hideWhenNoOverflow && hasNoOverflow {
+        if (prefs.hideWhenNoOverflow && hasNoOverflow) || (geom.isFullScreenSpace && !isAwakenedInFullScreen) {
             IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
             return
         }
@@ -129,11 +190,16 @@ public final class MouseMonitor {
     
     /// 同步前台活动屏幕（响应应用激活或 Space 切换）
     private func syncActiveScreen() {
+        fullScreenGraceTimer?.invalidate()
+        fullScreenGraceTimer = nil
+        isAwakenedInFullScreen = false
+        
         if let mainScreen = NSScreen.main {
             let currentDisplayID = ScreenManager.shared.currentGeometry.displayID
             if mainScreen.displayID != currentDisplayID {
                 ScreenManager.shared.updateActiveFocusScreen(to: mainScreen)
             }
         }
+        IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
     }
 }
