@@ -106,12 +106,22 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             
             await MainActor.run {
-                // 4. 汇总所有屏幕发现的应用至全局注册池
-                self.registerDiscoveredItems(currentSnapshot.allItems)
-                for (_, otherSnap) in otherSnapshots {
-                    self.registerDiscoveredItems(otherSnap.allItems)
+                // 4. 汇总所有活动屏幕发现的实时应用至全局注册池（原子替换，剔除已退出的应用）
+                var newDiscoveredMap: [String: MenuBarItem] = [:]
+                for item in currentSnapshot.allItems {
+                    let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
+                    newDiscoveredMap[key] = item
                 }
-                self.allDiscoveredItems = Array(self.discoveredItemsMap.values).sorted { ($0.title ?? "") < ($1.title ?? "") }
+                for (_, otherSnap) in otherSnapshots {
+                    for item in otherSnap.allItems {
+                        let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
+                        if newDiscoveredMap[key] == nil {
+                            newDiscoveredMap[key] = item
+                        }
+                    }
+                }
+                self.discoveredItemsMap = newDiscoveredMap
+                self.allDiscoveredItems = Array(newDiscoveredMap.values).sorted { ($0.title ?? "") < ($1.title ?? "") }
                 
                 // 5. 更新多屏快照池缓存
                 self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
@@ -131,14 +141,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                     self.performSync()
                 }
             }
-        }
-    }
-    
-    /// 注册发现的菜单栏应用至全局汇聚池
-    private func registerDiscoveredItems(_ items: [MenuBarItem]) {
-        for item in items {
-            let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
-            self.discoveredItemsMap[key] = item
         }
     }
     

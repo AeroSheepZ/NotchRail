@@ -17,9 +17,9 @@ public struct IslandRootView: View {
             ? screenManager.primaryGeometry
             : screenManager.currentGeometry
         
-        let snapshot = syncCoordinator.latestSnapshot
-        let snapshotIsCurrent = (snapshot?.displayID == geometry.displayID)
-        let overflowItems = snapshotIsCurrent ? (snapshot?.overflowItems ?? []) : []
+        let targetSnapshot = syncCoordinator.snapshot(for: geometry.displayID) ?? syncCoordinator.latestSnapshot
+        let snapshotIsCurrent = (targetSnapshot?.displayID == geometry.displayID)
+        let overflowItems = snapshotIsCurrent ? (targetSnapshot?.overflowItems ?? []) : []
         let isExpanded = stateMachine.currentState.isExpanded
         
         // 动态尺寸与耳翼计算
@@ -77,30 +77,19 @@ public struct IslandRootView: View {
                                 .padding(.bottom, 6)
                             } else {
                                 ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 8) {
+                                    HStack(spacing: 6) {
                                         ForEach(overflowItems) { item in
                                             IslandIconCell(
                                                 item: item,
                                                 state: iconResolver.iconStates[item.iconCacheKey] ?? .pending,
-                                                onTap: { targetItem in
-                                                    let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem)
-                                                    switch clickResult {
-                                                    case .success:
-                                                        if preferenceStore.preferences.autoCollapseOnClick {
-                                                            IslandStateMachine.shared.triggerCollapse()
-                                                        }
-                                                        return true
-                                                    case .failure:
-                                                        return false
-                                                    }
-                                                }
+                                                onTap: handleItemTap
                                             )
                                         }
                                     }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 1)
                                 }
-                                .frame(height: 38)
+                                .frame(height: 34)
                             }
                         }
                         .transition(
@@ -132,7 +121,7 @@ public struct IslandRootView: View {
                     await iconResolver.resolveIcons(for: overflowItems)
                 }
             }
-            .onChange(of: overflowItems) { newItems in
+            .onChange(of: overflowItems) { _, newItems in
                 // 溢出项变更时增量刷新图标
                 if !newItems.isEmpty {
                     Task {
@@ -167,6 +156,19 @@ public struct IslandRootView: View {
             IslandStateMachine.shared.triggerCollapse()
         } else {
             IslandStateMachine.shared.triggerExpand(overflowCount: overflowCount)
+        }
+    }
+    
+    private func handleItemTap(_ targetItem: MenuBarItem) async -> Bool {
+        let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem)
+        switch clickResult {
+        case .success:
+            if preferenceStore.preferences.autoCollapseOnClick {
+                IslandStateMachine.shared.triggerCollapse()
+            }
+            return true
+        case .failure:
+            return false
         }
     }
 }

@@ -196,10 +196,14 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 状态标记
 
-    /// 首见项标记 pending（已有 loaded/failed 状态的项不动，防刷新闪烁）
+    /// 首见项标记 pending（已有 loaded/failed 状态的项不动，若已有内存缓存则直接加载）
     private func markPendingIfNeeded(for items: [MenuBarItem]) {
         for item in items where iconStates[item.iconCacheKey] == nil {
-            iconStates[item.iconCacheKey] = .pending
+            if let cached = cache[item.iconCacheKey] {
+                iconStates[item.iconCacheKey] = .loaded(cached.nsImage)
+            } else {
+                iconStates[item.iconCacheKey] = .pending
+            }
         }
     }
 
@@ -270,9 +274,13 @@ public final class IconResolver: ObservableObject {
 
     private func evictIfNeeded() {
         guard cache.count > Self.MAX_CACHE_SIZE else { return }
-        let removeCount = cache.count - Self.MAX_CACHE_SIZE
+        evict(count: cache.count - Self.MAX_CACHE_SIZE)
+    }
+
+    /// 统一按 LRU 顺序驱逐指定数量的缓存项并回退状态
+    private func evict(count: Int) {
         var evicted = 0
-        while evicted < removeCount, !accessOrder.isEmpty {
+        while evicted < count, !accessOrder.isEmpty {
             let key = accessOrder.removeFirst()
             if cache.removeValue(forKey: key) != nil {
                 // 被驱逐项回退 pending（下次需要时重新捕获）
@@ -299,15 +307,7 @@ public final class IconResolver: ObservableObject {
     private func handleMemoryPressure() {
         guard !cache.isEmpty else { return }
         // 清理较旧的一半缓存（LRU 顺序）
-        let removeCount = (cache.count + 1) / 2
-        var evicted = 0
-        while evicted < removeCount, !accessOrder.isEmpty {
-            let key = accessOrder.removeFirst()
-            if cache.removeValue(forKey: key) != nil {
-                iconStates[key] = .pending
-                evicted += 1
-            }
-        }
+        evict(count: (cache.count + 1) / 2)
     }
 
     // MARK: - 捕获管线（后台线程执行）
@@ -375,12 +375,13 @@ public final class IconResolver: ObservableObject {
         // 5. 兜底：逐窗单独截图（合成失败 / 裁剪全透明的项）
         for entry in excluded {
             guard let image = Bridging.captureWindow(entry.item.windowID),
-                  !image.isFullyTransparent,
-                  let scale = validatedScale(CGFloat(image.width) / entry.bounds.width)
+                  !image.isFullyTransparent
             else {
                 result.failedKeys.insert(entry.item.iconCacheKey)
                 continue
             }
+            let rawScale = CGFloat(image.width) / max(1, entry.bounds.width)
+            let scale = validatedScale(rawScale) ?? max(1.0, rawScale.rounded())
             result.images[entry.item.iconCacheKey] = CapturedIcon(cgImage: image, scale: scale)
         }
 
@@ -389,7 +390,12 @@ public final class IconResolver: ObservableObject {
 
     /// 校验反推的捕获倍率是否落在真实 backing scale 上
     private nonisolated static func validatedScale(_ derived: CGFloat) -> CGFloat? {
-        Self.PLAUSIBLE_BACKING_SCALES.first { abs(derived - $0) <= Self.SCALE_TOLERANCE }
+        guard derived > 0.5 && derived < 4.5 else { return nil }
+        let rounded = derived.rounded()
+        if Self.PLAUSIBLE_BACKING_SCALES.contains(rounded) && abs(derived - rounded) <= 0.35 {
+            return rounded
+        }
+        return Self.PLAUSIBLE_BACKING_SCALES.first { abs(derived - $0) <= 0.35 }
     }
 
     // MARK: - 调试

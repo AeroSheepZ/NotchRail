@@ -6,7 +6,7 @@ import AppKit
 public enum IslandWingMetrics {
     /// 计算左侧耳翼所需的动态物理宽度（足额预算外边距、灰色胶囊完整背景与刘海呼吸间距）
     public static func leftWingWidth(for overflowCount: Int, isSyncing: Bool = false) -> CGFloat {
-        guard overflowCount > 0 || isSyncing else { return 0.0 }
+        guard overflowCount > 0 else { return 0.0 }
         
         let outerLeadingMargin: CGFloat = 6.0
         let capsuleInternalPadding: CGFloat = 12.0 // 左右各 6pt
@@ -21,11 +21,6 @@ public enum IslandWingMetrics {
         let pillTotalWidth = capsuleInternalPadding + iconWidth + itemSpacing + digitWidth
         let totalWingWidth = outerLeadingMargin + pillTotalWidth + notchTransitionMargin
         return ceil(totalWingWidth)
-    }
-    
-    /// 计算右侧耳翼所需的动态物理宽度（未来若有小组件/状态可动态扩展）
-    public static func rightWingWidth() -> CGFloat {
-        return 0.0
     }
 }
 
@@ -96,9 +91,8 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     /// 0 溢出时严格 1:1 贴合刘海物理尺寸；有溢出时左侧动态长出耳翼完全避开摄像头黑胶
     public func dynamicCompactBounds(for overflowCount: Int, isSyncing: Bool = false) -> CGRect {
         let leftWing = IslandWingMetrics.leftWingWidth(for: overflowCount, isSyncing: isSyncing)
-        let rightWing = IslandWingMetrics.rightWingWidth()
         
-        let compactWidth = physicalNotchRect.width + leftWing + rightWing
+        let compactWidth = physicalNotchRect.width + leftWing
         let compactHeight = statusBarHeight
         let compactX = physicalNotchRect.minX - leftWing
         let compactY = screenFrame.maxY - compactHeight
@@ -164,5 +158,18 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         let x = (viewBounds.width - currentWidth) / 2.0 + horizontalOffset
         let y = viewBounds.height - currentHeight
         return NSRect(x: max(0, x), y: max(0, y), width: currentWidth, height: currentHeight)
+    }
+
+    /// 计算在全局屏幕坐标系（左下角 (0,0)）内的活跃灵动岛矩形
+    public func interactiveScreenRect(
+        isExpanded: Bool,
+        overflowCount: Int,
+        isSyncing: Bool = false
+    ) -> CGRect {
+        if isExpanded {
+            return dynamicExtendedBounds(for: max(1, overflowCount), isSyncing: isSyncing)
+        } else {
+            return dynamicCompactBounds(for: overflowCount, isSyncing: isSyncing)
+        }
     }
 }

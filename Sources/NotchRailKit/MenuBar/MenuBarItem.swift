@@ -32,13 +32,13 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         }
     }
 
-    /// 图标缓存键（persistentKey + windowID 唯一限定）
-    ///
-    /// 仅 persistentKey 不够唯一：macOS 13+ 系统菜单栏项 owner 统一归控制中心进程，
-    /// 窗口名不可得时所有系统项的 persistentKey 相同（键冲突 → 全部渲染成同一图标）。
-    /// 追加 windowID（窗口生命周期内稳定、跨扫描周期不变）保证唯一且不闪占位。
+    /// 图标缓存键（以 windowID 为主键，确保跨扫描周期和 AX 解析前后绝对稳定）
     public var iconCacheKey: String {
-        "\(persistentKey)#\(windowID)"
+        if windowID != 0 {
+            return "win_\(windowID)"
+        } else {
+            return "\(persistentKey)"
+        }
     }
     
     public enum DisplayMode: String, Codable, Sendable {
@@ -52,8 +52,23 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         case unsupported     // 不支持直接 AX 触发
     }
     
+    /// 根据 windowID 与 pid 生成跨扫描确定性 UUID
+    public static func deterministicUUID(for windowID: CGWindowID, pid: pid_t) -> UUID {
+        if windowID != 0 {
+            var bytes: [UInt8] = [0x4E, 0x6F, 0x74, 0x63, 0x68, 0x52, 0x61, 0x69, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            withUnsafeBytes(of: windowID.bigEndian) { raw in
+                for (i, b) in raw.enumerated() {
+                    bytes[12 + i] = b
+                }
+            }
+            return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+        } else {
+            return UUID()
+        }
+    }
+    
     public init(
-        id: UUID = UUID(),
+        id: UUID? = nil,
         windowID: CGWindowID = 0,
         processIdentifier: pid_t,
         bundleIdentifier: String?,
@@ -66,7 +81,7 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         capability: InteractionCapability = .standardAXPress,
         isUnresponsive: Bool = false
     ) {
-        self.id = id
+        self.id = id ?? Self.deterministicUUID(for: windowID, pid: processIdentifier)
         self.windowID = windowID
         self.processIdentifier = processIdentifier
         self.bundleIdentifier = bundleIdentifier

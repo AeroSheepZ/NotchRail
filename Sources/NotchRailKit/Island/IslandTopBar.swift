@@ -26,7 +26,7 @@ public struct IslandTopBar: View {
     public var body: some View {
         HStack {
             // 左侧常态指示：黄色图标与溢出数量徽标（紧凑态下精准置于动态左耳翼可视发光区域）
-            if overflowCount > 0 || isSyncing {
+            if overflowCount > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "tray.full.fill")
                         .font(.system(size: 9, weight: .bold))

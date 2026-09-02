@@ -23,12 +23,12 @@ public struct IslandIconCell: View {
 
     /// 图标显示高度（对齐原生菜单栏图标高度）
     private static let ICON_HEIGHT: CGFloat = 22
-    /// 单元格总高度（保持既有触控目标）
-    private static let CELL_HEIGHT: CGFloat = 32
+    /// 单元格总高度（对齐原生菜单栏可点高度）
+    private static let CELL_HEIGHT: CGFloat = 28
     /// 单元格最小宽度（窄图标也保证可点）
-    private static let MIN_CELL_WIDTH: CGFloat = 32
-    /// 图标两侧的水平内边距（药丸内）
-    private static let PILL_H_INSET: CGFloat = 5
+    private static let MIN_CELL_WIDTH: CGFloat = 26
+    /// 图标两侧的水平内边距
+    private static let PILL_H_INSET: CGFloat = 3
 
     public init(
         item: MenuBarItem,
@@ -85,13 +85,16 @@ public struct IslandIconCell: View {
             triggerAction()
         } label: {
             ZStack {
-                // 悬停高亮胶囊背景（宽度随内容自适应）
-                RoundedRectangle(cornerRadius: IslandTheme.CornerRadius.CELL)
-                    .fill(isHovered ? IslandTheme.ColorPalette.CELL_HOVER : IslandTheme.ColorPalette.CELL_REST)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: IslandTheme.CornerRadius.CELL)
-                            .strokeBorder(isHovered ? Color.white.opacity(0.22) : Color.clear, lineWidth: IslandTheme.Stroke.LINE_WIDTH)
-                    )
+                // 仅悬停时展示原生风格的平滑高亮胶囊背景，常态保持纯净通透
+                if isHovered {
+                    RoundedRectangle(cornerRadius: IslandTheme.CornerRadius.CELL)
+                        .fill(IslandTheme.ColorPalette.CELL_HOVER)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: IslandTheme.CornerRadius.CELL)
+                                .strokeBorder(Color.white.opacity(0.18), lineWidth: IslandTheme.Stroke.LINE_WIDTH)
+                        )
+                        .transition(.opacity)
+                }
 
                 contentView
                     .shadow(color: isHovered ? Color.white.opacity(0.2) : Color.clear, radius: 2, x: 0, y: 0)

@@ -71,13 +71,21 @@ public final class IslandWindowCoordinator: ObservableObject {
         self.panel = panel
         self.lastActiveDisplayID = geometry.displayID
         
-        // 启动全局鼠标跨屏焦点追踪
+        // 启动全局鼠标跨屏焦点追踪与透明区域硬件级事件穿透
         MouseMonitor.shared.startMonitoring()
         
         applyDisplayAndVisibilityRules()
     }
     
-    /// 计算覆盖灵动岛全展开区域的稳定透明视口区域（吸顶居中）
+    /// 动态设置物理窗口的鼠标事件穿透性（硬件级无缝穿透底层 Chrome / Safari）
+    public func setIgnoresMouseEvents(_ ignores: Bool) {
+        guard let panel = self.panel else { return }
+        if panel.ignoresMouseEvents != ignores {
+            panel.ignoresMouseEvents = ignores
+        }
+    }
+    
+    /// 计算覆盖灵动岛全展开区域的稳定透明视口区域（吸顶居中常驻，展开/收起永不改变 Frame）
     private func calculateViewportBounds(for geometry: NotchGeometry) -> CGRect {
         let viewportWidth = min(geometry.screenFrame.width * 0.85, 800.0)
         let viewportHeight: CGFloat = IslandTheme.Dimension.EXTENDED_HEIGHT
@@ -157,7 +165,6 @@ public final class IslandWindowCoordinator: ObservableObject {
                 }
             }
         } else {
-            panel.ignoresMouseEvents = false
             if panel.frame != targetViewport {
                 panel.setFrame(targetViewport, display: true)
             }

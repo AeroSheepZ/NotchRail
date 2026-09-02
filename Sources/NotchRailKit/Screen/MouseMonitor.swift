@@ -11,31 +11,39 @@ public final class MouseMonitor {
     
     private var globalMouseDownMonitor: Any?
     private var localMouseDownMonitor: Any?
+    private var globalMouseMovedMonitor: Any?
     private var isMonitoring: Bool = false
     private var cancellables = Set<AnyCancellable>()
     
     private init() {}
     
-    /// 启动全局多屏焦点与点击追踪
+    /// 启动全局多屏焦点与点击追踪及透明区域动态穿透
     public func startMonitoring() {
         guard !isMonitoring else { return }
         isMonitoring = true
         
-        let eventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp]
+        let clickMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp]
         
         // 1. 全局鼠标点击与释放监听（捕获用户在任意屏幕上的激活点击）
-        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: eventMask) { [weak self] _ in
+        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: clickMask) { [weak self] _ in
             Task { @MainActor in
                 self?.handleClick(at: NSEvent.mouseLocation)
             }
         }
         
         // 2. 局部鼠标点击与释放监听（用户在自身灵动岛或窗口内点击）
-        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: eventMask) { [weak self] event in
+        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: clickMask) { [weak self] event in
             Task { @MainActor in
                 self?.handleClick(at: NSEvent.mouseLocation)
             }
             return event
+        }
+        
+        // 3. 全局鼠标移动监听（驱动非灵动岛透明区域 100% 硬件穿透，绝不遮挡底层应用）
+        globalMouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleMouseMove(at: NSEvent.mouseLocation)
+            }
         }
         
         // 3. 监听前台活动应用程序切换通知（Key Window 屏幕变化）
@@ -66,7 +74,42 @@ public final class MouseMonitor {
             NSEvent.removeMonitor(lm)
             localMouseDownMonitor = nil
         }
+        if let mm = globalMouseMovedMonitor {
+            NSEvent.removeMonitor(mm)
+            globalMouseMovedMonitor = nil
+        }
         cancellables.removeAll()
+    }
+    
+    /// 处理鼠标移动：当鼠标移出灵动岛活跃区域时，硬件级开启事件穿透，绝不遮挡底层 Chrome
+    private func handleMouseMove(at location: CGPoint) {
+        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        if isExpanded {
+            IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+            return
+        }
+        
+        let prefs = PreferenceStore.shared.preferences
+        let geom = (prefs.externalDisplayMode == .mainScreenOnly)
+            ? ScreenManager.shared.primaryGeometry
+            : ScreenManager.shared.currentGeometry
+        
+        let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
+            ?? MenuBarSyncCoordinator.shared.latestSnapshot
+        let overflowCount = targetSnapshot?.overflowCount ?? 0
+        let hasNoOverflow = overflowCount == 0
+        
+        if prefs.hideWhenNoOverflow && hasNoOverflow {
+            IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+            return
+        }
+        
+        let screenRect = geom.interactiveScreenRect(isExpanded: false, overflowCount: overflowCount)
+        // 允许外扩 4pt 交互过渡冗余
+        let paddedRect = screenRect.insetBy(dx: -4, dy: -4)
+        let isInside = NSMouseInRect(location, paddedRect, false)
+        
+        IslandWindowCoordinator.shared.setIgnoresMouseEvents(!isInside)
     }
     
     /// 处理用户在特定屏幕上的点击激活（与 ScreenManager 单一可信源直连，零缓存阻断）

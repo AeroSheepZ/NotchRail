@@ -381,45 +381,40 @@ public struct SettingsView: View {
     }
     
     private func filteredItems() -> [AppListEntry] {
-        let allItems = !syncCoordinator.allDiscoveredItems.isEmpty
-            ? syncCoordinator.allDiscoveredItems
-            : (syncCoordinator.latestSnapshot?.allItems ?? [])
+        let prefs = preferenceStore.preferences
+        let geom = (prefs.externalDisplayMode == .mainScreenOnly)
+            ? ScreenManager.shared.primaryGeometry
+            : ScreenManager.shared.currentGeometry
+        let currentSnapshot = syncCoordinator.snapshot(for: geom.displayID) ?? syncCoordinator.latestSnapshot
+        let menuBarItems = currentSnapshot?.allItems ?? []
         var seenBundleIDs = Set<String>()
         var result: [AppListEntry] = []
         
-        // 1. 已扫描到的运行中项目
-        for item in allItems {
+        let notchRightEdge = geom.physicalNotchRect.maxX
+        let screenMinX = geom.screenFrame.minX
+        let screenMaxX = geom.screenFrame.maxX
+        
+        // 1. 当前活动屏幕菜单栏中真实存在的应用
+        for item in menuBarItems {
             let bundleID = item.bundleIdentifier ?? "unknown.\(item.windowID)"
             if seenBundleIDs.contains(bundleID) { continue }
             seenBundleIDs.insert(bundleID)
             
             let isIgnored = preferenceStore.preferences.ignoredBundleIDs.contains(bundleID)
+            let frame = item.nativeFrame
+            let isGeometricallyOverflowed = (frame.minX < notchRightEdge || frame.maxX > (screenMaxX + 5) || frame.maxX < screenMinX)
+            
             let entry = resolveAppEntry(
                 bundleID: bundleID,
                 titleFallback: item.title,
-                isOverflowed: item.displayMode == .overflowed,
-                isNativeVisible: item.displayMode == .nativeVisible,
+                isOverflowed: isGeometricallyOverflowed,
+                isNativeVisible: !isGeometricallyOverflowed,
                 isIgnored: isIgnored
             )
             result.append(entry)
         }
         
-        // 2. 黑名单中未在当前屏幕扫描到的自定义项目
-        for ignoredID in preferenceStore.preferences.ignoredBundleIDs {
-            if seenBundleIDs.contains(ignoredID) { continue }
-            seenBundleIDs.insert(ignoredID)
-            
-            let entry = resolveAppEntry(
-                bundleID: ignoredID,
-                titleFallback: nil,
-                isOverflowed: false,
-                isNativeVisible: false,
-                isIgnored: true
-            )
-            result.append(entry)
-        }
-        
-        // 3. 搜索词模糊过滤
+        // 2. 搜索词模糊过滤
         if !searchText.isEmpty {
             result = result.filter {
                 fuzzyMatch(query: searchText, in: $0.title) || fuzzyMatch(query: searchText, in: $0.bundleID)
