@@ -131,8 +131,8 @@ public final class IslandWindowCoordinator: ObservableObject {
         let isScreenSwitching = (lastActiveDisplayID != nil && lastActiveDisplayID != effectiveGeom.displayID)
         self.lastActiveDisplayID = effectiveGeom.displayID
         
-        // 3. 仅在切屏至无溢出屏幕且开启自动隐藏时，重置收起展开态（不阻断在同屏的主动展开）
-        if isScreenSwitching && prefs.hideWhenNoOverflow && hasNoOverflow {
+        // 3. 切屏时无论目标屏有无溢出，均原子重置展开态，确保到达新屏幕时处于纯净紧凑态
+        if isScreenSwitching {
             if IslandStateMachine.shared.currentState.isExpanded {
                 IslandStateMachine.shared.triggerCollapse()
             }
@@ -165,17 +165,29 @@ public final class IslandWindowCoordinator: ObservableObject {
                 }
             }
         } else {
-            if panel.frame != targetViewport {
-                panel.setFrame(targetViewport, display: true)
-            }
-            panel.orderFrontRegardless()
-            if panel.alphaValue < 1.0 {
+            if isScreenSwitching {
+                panel.alphaValue = 0.0
+                if panel.frame != targetViewport {
+                    panel.setFrame(targetViewport, display: true)
+                }
+                panel.orderFrontRegardless()
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.20
+                    context.duration = 0.18
                     panel.animator().alphaValue = 1.0
                 }
             } else {
-                panel.alphaValue = 1.0
+                if panel.frame != targetViewport {
+                    panel.setFrame(targetViewport, display: true)
+                }
+                panel.orderFrontRegardless()
+                if panel.alphaValue < 1.0 {
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = 0.18
+                        panel.animator().alphaValue = 1.0
+                    }
+                } else {
+                    panel.alphaValue = 1.0
+                }
             }
         }
     }

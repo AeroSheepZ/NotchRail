@@ -21,14 +21,14 @@ public struct IslandIconCell: View {
 
     // MARK: - 尺寸常量
 
-    /// 图标显示高度（对齐原生菜单栏图标高度）
-    private static let ICON_HEIGHT: CGFloat = 22
+    /// 图标显示最大高度（严格对齐 macOS 原生菜单栏状态图标 18pt）
+    private static let MAX_ICON_HEIGHT: CGFloat = 18
     /// 单元格总高度（对齐原生菜单栏可点高度）
-    private static let CELL_HEIGHT: CGFloat = 28
+    private static let CELL_HEIGHT: CGFloat = 26
     /// 单元格最小宽度（窄图标也保证可点）
-    private static let MIN_CELL_WIDTH: CGFloat = 26
+    private static let MIN_CELL_WIDTH: CGFloat = 22
     /// 图标两侧的水平内边距
-    private static let PILL_H_INSET: CGFloat = 3
+    private static let PILL_H_INSET: CGFloat = 4
 
     public init(
         item: MenuBarItem,
@@ -59,18 +59,21 @@ public struct IslandIconCell: View {
         return false
     }
 
-    /// 图标显示尺寸：高度对齐、宽度按真实比例自适应
+    /// 图标显示尺寸：高度严格锁定在原生 14~18pt，宽度按真实比例自适应（绝不超倍拉伸）
     private var displaySize: CGSize {
-        let height = Self.ICON_HEIGHT
+        let maxHeight = Self.MAX_ICON_HEIGHT
         if let image = loadedImage, image.size.height > 0 {
             let ratio = image.size.width / image.size.height
-            return CGSize(width: max(1, height * ratio), height: height)
+            // 真实原生逻辑高度，上限 18pt，下限 14pt
+            let height = min(maxHeight, max(14.0, image.size.height))
+            let width = max(1.0, height * ratio)
+            return CGSize(width: width, height: height)
         }
-        // 占位：按菜单栏窗口真实宽高比预留（clamp 防御异常 frame），图标到达后零跳动
+        // 占位：按菜单栏窗口真实宽高比预留
         let aspect: CGFloat = item.nativeFrame.height > 0
             ? item.nativeFrame.width / item.nativeFrame.height
             : 1
-        return CGSize(width: max(1, height * aspect.clamped(to: 0.6...6.0)), height: height)
+        return CGSize(width: max(1, maxHeight * aspect.clamped(to: 0.6...6.0)), height: maxHeight)
     }
 
     /// 单元格宽度（自适应内容，窄图标保底）
@@ -121,6 +124,7 @@ public struct IslandIconCell: View {
                 .interpolation(.high)
                 .antialiased(true)
                 .resizable()
+                .aspectRatio(contentMode: .fit)
                 .frame(width: displaySize.width, height: displaySize.height)
         } else {
             placeholderView

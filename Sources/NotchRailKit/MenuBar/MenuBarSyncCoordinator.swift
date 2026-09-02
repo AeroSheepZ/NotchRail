@@ -14,6 +14,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     @Published public private(set) var latestSnapshot: MenuBarSnapshot?
     @Published public private(set) var allDiscoveredItems: [MenuBarItem] = []
     @Published public private(set) var isScanning: Bool = false
+    @Published public private(set) var isPrewarming: Bool = false
     
     private var discoveredItemsMap: [String: MenuBarItem] = [:]
     private var snapshotsByDisplay: [CGDirectDisplayID: MenuBarSnapshot] = [:]
@@ -36,13 +37,13 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     public func start() {
         stop()
         
-        // 1. 立即执行一次全屏极速扫描与预热
-        scheduleSync(immediate: true)
+        // 1. 立即执行一次全屏极速扫描与预热（展示完整加载动画）
+        scheduleSync(immediate: true, showProgress: true)
         
-        // 2. 启动 5.0s 空闲退避心跳
+        // 2. 启动 5.0s 空闲退避静默心跳
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.scheduleSync(immediate: false)
+                self?.scheduleSync(immediate: false, showProgress: false)
             }
         }
     }
@@ -56,29 +57,33 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     }
     
     /// 安排一次扫描任务（支持 100ms 敏捷防抖）
-    public func scheduleSync(immediate: Bool = false) {
+    public func scheduleSync(immediate: Bool = false, showProgress: Bool = true) {
         debounceTimer?.invalidate()
         debounceTimer = nil
         
         if immediate {
-            performSync()
+            performSync(showProgress: showProgress)
         } else {
             debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: false) { [weak self] _ in
                 Task { @MainActor in
-                    self?.performSync()
+                    self?.performSync(showProgress: showProgress)
                 }
             }
         }
     }
     
     /// 执行后台扫描、多屏预热与图标同步解析
-    private func performSync() {
+    private func performSync(showProgress: Bool = true) {
         guard !isScanning else {
             pendingResync = true
             return
         }
         isScanning = true
+        if showProgress || latestSnapshot == nil {
+            isPrewarming = true
+        }
         pendingResync = false
+        let startTime = Date()
         
         let currentGeom = ScreenManager.shared.currentGeometry
         let allGeometries = ScreenManager.shared.allGeometries
@@ -89,9 +94,9 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             let currentItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: currentGeom)
             let currentSnapshot = OverflowCalculator.resolve(items: currentItems, geometry: currentGeom, ignoredBundleIDs: ignoredIDs)
             
-            // 2. 立即同步预热当前屏幕的溢出图标（确保发布快照时第 0 帧即可呈现真实图标，消除加载占位）
-            if !currentSnapshot.overflowItems.isEmpty {
-                await IconResolver.shared.resolveIcons(for: currentSnapshot.overflowItems)
+            // 2. 立即同步预热当前屏幕全部图标（确保发布快照时第 0 帧即可呈现真实图标，消除加载占位）
+            if !currentSnapshot.allItems.isEmpty {
+                await IconResolver.shared.resolveIcons(for: currentSnapshot.allItems)
             }
             
             // 3. 并行预热其他连接屏幕
@@ -99,10 +104,17 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             for otherGeom in allGeometries where otherGeom.displayID != currentGeom.displayID {
                 let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
                 let otherSnap = OverflowCalculator.resolve(items: otherItems, geometry: otherGeom, ignoredBundleIDs: ignoredIDs)
-                if !otherSnap.overflowItems.isEmpty {
-                    await IconResolver.shared.resolveIcons(for: otherSnap.overflowItems)
+                if !otherSnap.allItems.isEmpty {
+                    await IconResolver.shared.resolveIcons(for: otherSnap.allItems)
                 }
                 otherSnapshots[otherGeom.displayID] = otherSnap
+            }
+            
+            // 若开启了加载进度动画，保证至少维持 500ms 完整旋转周期，避免右耳翼闪退抽搐
+            let elapsed = Date().timeIntervalSince(startTime)
+            if showProgress && elapsed < 0.50 {
+                let remainingNanos = UInt64((0.50 - elapsed) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: remainingNanos)
             }
             
             await MainActor.run {
@@ -135,10 +147,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                     NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
                 }
                 
+                self.isPrewarming = false
                 self.isScanning = false
                 
                 if self.pendingResync {
-                    self.performSync()
+                    self.performSync(showProgress: false)
                 }
             }
         }

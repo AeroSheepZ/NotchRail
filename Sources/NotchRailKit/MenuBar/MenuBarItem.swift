@@ -18,6 +18,7 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public var displayMode: DisplayMode
     public var capability: InteractionCapability
     public var isUnresponsive: Bool
+    public var isOnScreen: Bool
     
     /// 跨扫描周期的稳定持久化缓存键（基于 Bundle ID、AX 标识符或 Title）
     public var persistentKey: String {
@@ -79,7 +80,8 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         nativeFrame: CGRect,
         displayMode: DisplayMode = .nativeVisible,
         capability: InteractionCapability = .standardAXPress,
-        isUnresponsive: Bool = false
+        isUnresponsive: Bool = false,
+        isOnScreen: Bool = true
     ) {
         self.id = id ?? Self.deterministicUUID(for: windowID, pid: processIdentifier)
         self.windowID = windowID
@@ -93,5 +95,6 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         self.displayMode = displayMode
         self.capability = capability
         self.isUnresponsive = isUnresponsive
+        self.isOnScreen = isOnScreen
     }
 }

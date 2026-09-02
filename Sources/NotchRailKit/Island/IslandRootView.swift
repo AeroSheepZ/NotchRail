@@ -17,23 +17,23 @@ public struct IslandRootView: View {
             ? screenManager.primaryGeometry
             : screenManager.currentGeometry
         
-        let targetSnapshot = syncCoordinator.snapshot(for: geometry.displayID) ?? syncCoordinator.latestSnapshot
-        let snapshotIsCurrent = (targetSnapshot?.displayID == geometry.displayID)
-        let overflowItems = snapshotIsCurrent ? (targetSnapshot?.overflowItems ?? []) : []
+        let targetSnapshot = syncCoordinator.snapshot(for: geometry.displayID)
+        let isSyncing = syncCoordinator.isPrewarming || (targetSnapshot == nil)
+        let overflowItems = targetSnapshot?.overflowItems ?? []
         let isExpanded = stateMachine.currentState.isExpanded
         
         // 动态尺寸与耳翼计算
-        let dynamicCompactBounds = geometry.dynamicCompactBounds(for: overflowItems.count, isSyncing: !snapshotIsCurrent)
+        let dynamicCompactBounds = geometry.dynamicCompactBounds(for: overflowItems.count, isSyncing: isSyncing)
         let compactWidth = dynamicCompactBounds.width
         let compactHeight = geometry.statusBarHeight
-        let dynamicWidth = geometry.dynamicExtendedBounds(for: max(1, overflowItems.count)).width
+        let dynamicWidth = geometry.dynamicExtendedBounds(for: max(1, overflowItems.count), isSyncing: isSyncing).width
         
         let currentWidth = isExpanded ? dynamicWidth : compactWidth
         let currentHeight = isExpanded ? IslandTheme.Dimension.EXTENDED_HEIGHT : compactHeight
         let currentCornerRadius = isExpanded ? IslandTheme.CornerRadius.EXTENDED_BOTTOM : IslandTheme.CornerRadius.COMPACT_BOTTOM
         
-        // 计算紧凑态相对刘海中心的水平偏移（左耳翼延伸，右侧平齐）
-        let leftWing = isExpanded ? 0.0 : IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: !snapshotIsCurrent)
+        // 计算紧凑态相对刘海中心的水平偏移（左耳翼向左延展，底座永不偏移摄像头）
+        let leftWing = isExpanded ? 0.0 : IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: isSyncing)
         let horizontalOffset = -leftWing / 2.0
         
         VStack(spacing: 0) {
@@ -43,23 +43,23 @@ public struct IslandRootView: View {
                     .frame(width: currentWidth, height: currentHeight)
                 
                 // 2. 灵动岛内部内容层（分层级联渲染）
-                VStack(spacing: 6) {
-                    // 顶部栏：徽章常驻左耳翼；设置齿轮仅展开态显示
+                VStack(spacing: 4) {
+                    // 顶部栏：加载中左耳翼展示矢量 Spinner；就绪后展示黄色徽标；展开态展示设置齿轮
                     IslandTopBar(
                         overflowCount: overflowItems.count,
-                        isSyncing: !snapshotIsCurrent,
+                        isSyncing: isSyncing,
                         showsSettingsButton: isExpanded,
                         onSettingsTapped: {
                             SettingsWindowCoordinator.shared.showSettings()
                         }
                     )
-                    .padding(.horizontal, isExpanded ? 8 : 0)
-                    .padding(.top, isExpanded ? 8 : 0)
-                    .frame(height: compactHeight)
+                    .padding(.horizontal, isExpanded ? 10 : 0)
+                    .padding(.top, isExpanded ? 6 : 0)
+                    .frame(height: isExpanded ? 28 : compactHeight)
                     
                     // 下层展开内容区：图标水平滚动列表或空状态提示
                     if isExpanded {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 4) {
                             Divider()
                                 .background(Color.white.opacity(0.12))
                                 .padding(.horizontal, 14)
@@ -77,7 +77,7 @@ public struct IslandRootView: View {
                                 .padding(.bottom, 6)
                             } else {
                                 ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 6) {
+                                    HStack(spacing: 8) {
                                         ForEach(overflowItems) { item in
                                             IslandIconCell(
                                                 item: item,
@@ -87,9 +87,9 @@ public struct IslandRootView: View {
                                         }
                                     }
                                     .padding(.horizontal, 12)
-                                    .padding(.vertical, 1)
+                                    .padding(.vertical, 2)
                                 }
-                                .frame(height: 34)
+                                .frame(height: 36)
                             }
                         }
                         .transition(
@@ -108,34 +108,22 @@ public struct IslandRootView: View {
             .animation(IslandTheme.Animation.FLUID_SPRING, value: horizontalOffset)
             .contentShape(Rectangle())
             .onHover { isHovered in
-                handleHover(isHovered, overflowCount: overflowItems.count)
+                handleHover(isHovered, overflowCount: overflowItems.count, isSyncing: isSyncing)
             }
             .simultaneousGesture(
                 TapGesture().onEnded {
-                    handleTap(overflowCount: overflowItems.count)
+                    handleTap(overflowCount: overflowItems.count, isSyncing: isSyncing)
                 }
             )
-            .task {
-                // 首次加载或屏幕切换时预先解析图标
-                if !overflowItems.isEmpty {
-                    await iconResolver.resolveIcons(for: overflowItems)
-                }
-            }
-            .onChange(of: overflowItems) { _, newItems in
-                // 溢出项变更时增量刷新图标
-                if !newItems.isEmpty {
-                    Task {
-                        await iconResolver.resolveIcons(for: newItems)
-                    }
-                }
-            }
+            .id(geometry.displayID)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
     
     // MARK: - 交互触发分发 (Hover & Click 隔离及 HoverAndClick 复合支持)
     
-    private func handleHover(_ isHovered: Bool, overflowCount: Int) {
+    private func handleHover(_ isHovered: Bool, overflowCount: Int, isSyncing: Bool) {
+        guard !isSyncing else { return }
         let prefs = preferenceStore.preferences
         // 允许 hover 与 hoverAndClick 模式触发悬停防抖
         guard prefs.triggerMode == .hover || prefs.triggerMode == .hoverAndClick else { return }
@@ -147,7 +135,8 @@ public struct IslandRootView: View {
         }
     }
     
-    private func handleTap(overflowCount: Int) {
+    private func handleTap(overflowCount: Int, isSyncing: Bool) {
+        guard !isSyncing else { return }
         let prefs = preferenceStore.preferences
         // 允许 click 与 hoverAndClick 模式触发点击即时展开/收起
         guard prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick else { return }

@@ -2,25 +2,39 @@ import Foundation
 import CoreGraphics
 import AppKit
 
-/// 灵动岛耳翼动态物理度量计算器（内容驱动：图标 + 间距 + 数字 + 内外边距）
+/// 灵动岛耳翼动态物理度量计算器（内容驱动：图标 + 间距 + 数字 + 内外边距 + 加载时序）
 public enum IslandWingMetrics {
-    /// 计算左侧耳翼所需的动态物理宽度（足额预算外边距、灰色胶囊完整背景与刘海呼吸间距）
+    /// 计算等宽数字展示区宽度
+    public static func digitAreaWidth(for count: Int) -> CGFloat {
+        let digitCount = max(1, String(count).count)
+        return CGFloat(digitCount) * 7.5 + 2.5
+    }
+
+    /// 计算左侧耳翼所需的动态物理宽度（加载中展示 Spinner，就绪后展示黄色徽标）
     public static func leftWingWidth(for overflowCount: Int, isSyncing: Bool = false) -> CGFloat {
+        if isSyncing {
+            // 加载中：仅在当前或预估有溢出项时左侧伸出胶囊展示 IslandSpinner；0 溢出屏幕保持 0 宽
+            return overflowCount > 0 ? 38.0 : 0.0
+        }
+        
         guard overflowCount > 0 else { return 0.0 }
         
         let outerLeadingMargin: CGFloat = 6.0
         let capsuleInternalPadding: CGFloat = 12.0 // 左右各 6pt
         let iconWidth: CGFloat = 13.0             // SF Symbol tray.full.fill 真实渲染宽度
         let itemSpacing: CGFloat = 4.0
-        
-        let digitCount = max(1, String(overflowCount).count)
-        let digitWidth: CGFloat = CGFloat(digitCount) * 7.5 + 2.5 // 等宽数字区宽度 (1位数 10pt, 2位数 17.5pt)
+        let digitWidth = digitAreaWidth(for: overflowCount)
         
         let notchTransitionMargin: CGFloat = 10.0 // 与物理刘海左侧喇叭口间的安全过渡距离
         
         let pillTotalWidth = capsuleInternalPadding + iconWidth + itemSpacing + digitWidth
         let totalWingWidth = outerLeadingMargin + pillTotalWidth + notchTransitionMargin
         return ceil(totalWingWidth)
+    }
+
+    /// 右侧耳翼宽度（严格为 0，右侧始终与刘海右缘平齐，底座永不偏离摄像头，绝不遮挡原生状态栏）
+    public static func rightWingWidth(isSyncing: Bool = false) -> CGFloat {
+        return 0.0
     }
 }
 
@@ -88,7 +102,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     }
 
     /// 根据当前溢出数量动态计算紧凑态几何边界
-    /// 0 溢出时严格 1:1 贴合刘海物理尺寸；有溢出时左侧动态长出耳翼完全避开摄像头黑胶
+    /// 0 溢出时严格 1:1 贴合刘海物理尺寸；加载中或有溢出时左侧动态长出耳翼完全避开摄像头黑胶
     public func dynamicCompactBounds(for overflowCount: Int, isSyncing: Bool = false) -> CGRect {
         let leftWing = IslandWingMetrics.leftWingWidth(for: overflowCount, isSyncing: isSyncing)
         

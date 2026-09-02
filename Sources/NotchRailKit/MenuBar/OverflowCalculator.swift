@@ -25,11 +25,13 @@ public enum OverflowCalculator {
             
             let frame = item.nativeFrame
             
-            // 2. 几何溢出判定：
-            // - 左边界侵入刘海右边缘或被挤压至刘海左侧 (frame.minX < notchRightEdge)
+            // 2. 综合溢出判定：
+            // - 底层 WindowServer 标记未在屏幕上显示 (!item.isOnScreen)
+            // - 左边界侵入刘海右边缘圆角过渡区 (frame.minX < notchRightEdge + 12.0)
             // - 超出屏幕右边界 (frame.maxX > screenMaxX + 5)
             // - 超出屏幕左边界 (frame.maxX < screenMinX)
-            let isOverflown = frame.minX < notchRightEdge ||
+            let isOverflown = !item.isOnScreen ||
+                              frame.minX < (notchRightEdge + 12.0) ||
                               frame.maxX > (screenMaxX + 5) ||
                               frame.maxX < screenMinX
             

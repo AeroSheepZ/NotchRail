@@ -303,6 +303,22 @@ public struct SettingsView: View {
                 }
             }
             
+            // 同步与预热中指示器（与灵动岛双端实时联动，统一矢量动效）
+            if syncCoordinator.isPrewarming {
+                HStack(spacing: 8) {
+                    IslandSpinner()
+                        .frame(width: 12, height: 12)
+                    Text("正在同步菜单栏快照与图标...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.2))
+                .cornerRadius(6)
+            }
+            
             // 应用列表
             let items = filteredItems()
             if items.isEmpty {
@@ -317,14 +333,23 @@ public struct SettingsView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                .background(Color.black.opacity(0.25))
                 .cornerRadius(8)
             } else {
-                List(items, id: \.uniqueKey) { entry in
-                    appRow(for: entry)
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(items) { entry in
+                            appRow(for: entry)
+                        }
+                    }
+                    .padding(6)
                 }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .background(Color.black.opacity(0.25))
                 .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
             }
             
             // 底部操作栏
@@ -349,34 +374,44 @@ public struct SettingsView: View {
     private struct AppListEntry: Identifiable {
         var id: String { uniqueKey }
         let uniqueKey: String
+        let originalIndex: Int
         let title: String
         let bundleID: String
         let isOverflowed: Bool
         let isNativeVisible: Bool
         let isIgnored: Bool
-        let appIcon: NSImage?
+        let statusIcon: NSImage?
     }
     
-    /// 统一装配应用列表条目（消除重复代码）
+    /// 统一装配应用列表条目（严格只使用原生菜单栏真实截图）
     private func resolveAppEntry(
+        item: MenuBarItem,
+        index: Int,
         bundleID: String,
-        titleFallback: String?,
         isOverflowed: Bool,
         isNativeVisible: Bool,
         isIgnored: Bool
     ) -> AppListEntry {
         let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
-        let icon = runningApp?.icon ?? NSWorkspace.shared.icon(forFile: runningApp?.bundleURL?.path ?? "")
-        let title = titleFallback ?? runningApp?.localizedName ?? bundleID
+        let title = item.title ?? runningApp?.localizedName ?? bundleID
+        
+        // 从 IconResolver 获取当前窗口捕获的真实菜单栏状态图标
+        let statusImage: NSImage? = {
+            if case .loaded(let img) = IconResolver.shared.iconStates[item.iconCacheKey] {
+                return img
+            }
+            return nil
+        }()
         
         return AppListEntry(
-            uniqueKey: bundleID,
+            uniqueKey: "\(bundleID)_\(item.windowID)",
+            originalIndex: index,
             title: title,
             bundleID: bundleID,
             isOverflowed: isOverflowed,
             isNativeVisible: isNativeVisible,
             isIgnored: isIgnored,
-            appIcon: icon
+            statusIcon: statusImage
         )
     }
     
@@ -387,28 +422,21 @@ public struct SettingsView: View {
             : ScreenManager.shared.currentGeometry
         let currentSnapshot = syncCoordinator.snapshot(for: geom.displayID) ?? syncCoordinator.latestSnapshot
         let menuBarItems = currentSnapshot?.allItems ?? []
-        var seenBundleIDs = Set<String>()
         var result: [AppListEntry] = []
         
-        let notchRightEdge = geom.physicalNotchRect.maxX
-        let screenMinX = geom.screenFrame.minX
-        let screenMaxX = geom.screenFrame.maxX
-        
-        // 1. 当前活动屏幕菜单栏中真实存在的应用
-        for item in menuBarItems {
-            let bundleID = item.bundleIdentifier ?? "unknown.\(item.windowID)"
-            if seenBundleIDs.contains(bundleID) { continue }
-            seenBundleIDs.insert(bundleID)
-            
-            let isIgnored = preferenceStore.preferences.ignoredBundleIDs.contains(bundleID)
-            let frame = item.nativeFrame
-            let isGeometricallyOverflowed = (frame.minX < notchRightEdge || frame.maxX > (screenMaxX + 5) || frame.maxX < screenMinX)
+        // 1. 从单一真实快照中装配当前活动屏幕菜单栏项
+        for (index, item) in menuBarItems.enumerated() {
+            let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
+            let isIgnored = item.displayMode == .ignored
+            let isOverflowed = item.displayMode == .overflowed
+            let isNativeVisible = item.displayMode == .nativeVisible
             
             let entry = resolveAppEntry(
+                item: item,
+                index: index,
                 bundleID: bundleID,
-                titleFallback: item.title,
-                isOverflowed: isGeometricallyOverflowed,
-                isNativeVisible: !isGeometricallyOverflowed,
+                isOverflowed: isOverflowed,
+                isNativeVisible: isNativeVisible,
                 isIgnored: isIgnored
             )
             result.append(entry)
@@ -419,6 +447,23 @@ public struct SettingsView: View {
             result = result.filter {
                 fuzzyMatch(query: searchText, in: $0.title) || fuzzyMatch(query: searchText, in: $0.bundleID)
             }
+        }
+        
+        // 3. 排序策略：
+        //   - 第 1 梯队：溢出项（isOverflowed == true，岛内展示），置顶（按扫描物理顺序 originalIndex 升序）
+        //   - 第 2 梯队：原生可见项（!isIgnored && !isOverflowed，顶栏可见），倒序排布（originalIndex 降序）
+        //   - 第 3 梯队：已隐藏项（isIgnored == true）
+        result.sort { lhs, rhs in
+            if lhs.isOverflowed != rhs.isOverflowed {
+                return lhs.isOverflowed && !rhs.isOverflowed
+            }
+            if lhs.isIgnored != rhs.isIgnored {
+                return !lhs.isIgnored && rhs.isIgnored
+            }
+            if lhs.isOverflowed && rhs.isOverflowed {
+                return lhs.originalIndex < rhs.originalIndex
+            }
+            return lhs.originalIndex > rhs.originalIndex
         }
         
         return result
@@ -443,25 +488,47 @@ public struct SettingsView: View {
     
     @ViewBuilder
     private func appRow(for entry: AppListEntry) -> some View {
-        HStack(spacing: 10) {
-            if let icon = entry.appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .cornerRadius(4)
-            } else {
-                Image(systemName: "app.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(.secondary)
-                    .frame(width: 24, height: 24)
+        let iconHeight: CGFloat = 16
+        let containerWidth: CGFloat = {
+            if let img = entry.statusIcon, img.size.height > 0 {
+                let ratio = img.size.width / img.size.height
+                return max(28.0, min(80.0, iconHeight * ratio + 10))
             }
+            return 28.0
+        }()
+        
+        HStack(spacing: 12) {
+            // 图标容器：深色高对比度衬底，自适应长方形/正方形图标宽度，清晰呈现真实单栏图标
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.black.opacity(0.55))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                
+                if let statusImg = entry.statusIcon {
+                    Image(nsImage: statusImg)
+                        .interpolation(.high)
+                        .antialiased(true)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: iconHeight)
+                } else {
+                    Image(systemName: "menubar.rectangle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+            }
+            .frame(width: containerWidth, height: 26)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
                     .font(.subheadline.weight(.medium))
+                    .foregroundColor(.white.opacity(0.92))
                 Text(entry.bundleID)
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.white.opacity(0.5))
             }
             
             Spacer()
@@ -473,7 +540,7 @@ public struct SettingsView: View {
                     .foregroundColor(.red)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.red.opacity(0.12))
+                    .background(Color.red.opacity(0.15))
                     .clipShape(Capsule())
             } else if entry.isOverflowed {
                 Text("岛内展示 (溢出)")
@@ -481,15 +548,15 @@ public struct SettingsView: View {
                     .foregroundColor(.orange)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.12))
+                    .background(Color.orange.opacity(0.15))
                     .clipShape(Capsule())
             } else {
                 Text("原生可见")
                     .font(.caption2.weight(.semibold))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.green.opacity(0.85))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12))
+                    .background(Color.green.opacity(0.15))
                     .clipShape(Capsule())
             }
             
@@ -508,7 +575,16 @@ public struct SettingsView: View {
                 .buttonStyle(.bordered)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        )
     }
     
     // MARK: - Tab 4: 关于与诊断 (About & Health)

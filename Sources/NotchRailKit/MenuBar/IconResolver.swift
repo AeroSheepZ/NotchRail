@@ -132,50 +132,31 @@ public final class IconResolver: ObservableObject {
     // MARK: - 主解析入口
 
     /// 捕获进行中标记（串行化 WindowServer 捕获，防并发批次互相干扰）
-    private var isCapturing = false
-    /// 捕获期间收到的新请求（如展开瞬间的快照变化），本轮结束后立即补一轮
-    private var pendingRequest: [MenuBarItem]?
-
-    /// 批量解析菜单栏项图标（渐进：先标记 pending → 后台捕获 → 只发布变化项）
+    /// 批量解析菜单栏项图标（阻塞式确定性装载：内存已有项 0ms 直出，未缓存项真实等待捕获入库）
     public func resolveIcons(for items: [MenuBarItem]) async {
         guard !items.isEmpty else { return }
 
-        // 1. 首见项先标记 pending（渲染层立刻显示占位，无需等待截图）
-        markPendingIfNeeded(for: items)
-
-        // 2. 未授权屏幕录制 → 不捕获（渲染层由外部提示权限）
-        guard CGPreflightScreenCaptureAccess() else { return }
-
-        // 3. 已有捕获在进行：暂存请求，本轮结束后补一轮（与 MenuBarSyncCoordinator 同模式）
-        guard !isCapturing else {
-            pendingRequest = items
-            return
-        }
-        isCapturing = true
-        defer { isCapturing = false }
-
-        var currentItems = items
-        while true {
-            // 黑名单快照：冷却中的项跳过捕获（避免无效系统调用）
-            let blacklistedKeys = currentlyBlacklistedKeys()
-
-            // 后台执行捕获管线（nonisolated async 自动离开 MainActor）
-            let result = await Self.capturePipeline(currentItems, blacklistedKeys: blacklistedKeys)
-
-            // 只应用视觉变化的项（避免无意义重渲染）
-            apply(result, to: currentItems)
-
-            // 补扫暂存的请求（串行执行，保证最终状态属于最新请求）
-            if let pending = pendingRequest {
-                pendingRequest = nil
-                currentItems = pending
-            } else {
-                break
+        // 1. 已有内存缓存的项直接置为 loaded 状态（0ms 瞬间直出）
+        for item in items {
+            let key = item.iconCacheKey
+            if let cached = cache[key] {
+                iconStates[key] = .loaded(cached.nsImage)
             }
         }
+
+        // 2. 筛选出未缓存的新项
+        let uncachedItems = items.filter { cache[$0.iconCacheKey] == nil }
+        guard !uncachedItems.isEmpty else { return }
+
+        // 3. 未授权屏幕录制时直接返回
+        guard CGPreflightScreenCaptureAccess() else { return }
+
+        // 4. 阻塞式执行后台捕获管线，确保返回前所有未缓存项 100% 完成截图并装载入库
+        let result = await Self.capturePipeline(uncachedItems, blacklistedKeys: [])
+        apply(result, to: uncachedItems)
     }
 
-    /// 兼容旧调用方（Spike 调试）的同步快照式 API
+    /// 兼容旧调用方的同步快照式 API
     public func resolveIconsSnapshot(for items: [MenuBarItem]) async -> [UUID: ResolvedIcon] {
         await resolveIcons(for: items)
         var result: [UUID: ResolvedIcon] = [:]
@@ -192,19 +173,6 @@ public final class IconResolver: ObservableObject {
             }
         }
         return result
-    }
-
-    // MARK: - 状态标记
-
-    /// 首见项标记 pending（已有 loaded/failed 状态的项不动，若已有内存缓存则直接加载）
-    private func markPendingIfNeeded(for items: [MenuBarItem]) {
-        for item in items where iconStates[item.iconCacheKey] == nil {
-            if let cached = cache[item.iconCacheKey] {
-                iconStates[item.iconCacheKey] = .loaded(cached.nsImage)
-            } else {
-                iconStates[item.iconCacheKey] = .pending
-            }
-        }
     }
 
     // MARK: - 应用捕获结果
@@ -312,7 +280,7 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 捕获管线（后台线程执行）
 
-    /// 纯函数式捕获管线：合成截图 → scale 校验 → 裁剪 → 失败项逐窗兜底
+    /// 纯函数式捕获管线：直接逐窗高精度截图 → scale 校验 → 自动裁剪
     ///
     /// nonisolated + async → 自动运行在全局并发执行器，不阻塞 MainActor
     private nonisolated static func capturePipeline(
@@ -321,68 +289,33 @@ public final class IconResolver: ObservableObject {
     ) async -> CaptureResult {
         var result = CaptureResult()
 
-        // 1. 收集实时窗口 bounds，过滤退化窗口与黑名单项
+        // 1. 收集有效窗口 ID
         var entries: [(item: MenuBarItem, bounds: CGRect)] = []
         for item in items {
-            guard item.windowID != 0,
-                  !blacklistedKeys.contains(item.iconCacheKey)
-            else { continue }
-            guard let bounds = Bridging.frame(for: item.windowID),
-                  bounds.width > 0, bounds.height > 0
-            else { continue }
+            guard item.windowID != 0 else { continue }
+            let bounds = Bridging.frame(for: item.windowID) ?? item.nativeFrame
             entries.append((item, bounds))
         }
 
-        // 无可捕获窗口：全部记为失败（保持外部可见的失败状态一致性）
         guard !entries.isEmpty else {
-            result.failedKeys = Set(items.filter { !blacklistedKeys.contains($0.iconCacheKey) }.map(\.iconCacheKey))
             return result
         }
 
-        // 2. 合成截图（一次系统调用截全部窗口）
-        let union = entries.reduce(CGRect.null) { $0.union($1.bounds) }
-        let windowIDs = entries.map(\.item.windowID)
-        var excluded: [(item: MenuBarItem, bounds: CGRect)] = []
-
-        if let composite = Bridging.captureComposite(windowIDs: windowIDs, screenBounds: union) {
-            // 3. 反推真实捕获倍率并校验（只信任真实 backing scale，防错大错小）
-            let derivedScale = CGFloat(composite.width) / union.width
-            if let scale = validatedScale(derivedScale) {
-                // 4. 按窗口 bounds 裁剪出单个图标
-                for entry in entries {
-                    let cropRect = CGRect(
-                        x: (entry.bounds.minX - union.minX) * scale,
-                        y: (entry.bounds.minY - union.minY) * scale,
-                        width: entry.bounds.width * scale,
-                        height: entry.bounds.height * scale
-                    )
-                    // 裁剪 + 脱离父图内存 + 全透明检测（未授权时系统返回全透明占位图）
-                    if let cropped = composite.cropping(to: cropRect)?.detachedCopy(),
-                       !cropped.isFullyTransparent {
-                        result.images[entry.item.iconCacheKey] = CapturedIcon(cgImage: cropped, scale: scale)
-                    } else {
-                        excluded.append(entry)
-                    }
-                }
-            } else {
-                // scale 不可信（bounds 与图像描述的不是同一状态）→ 全部走逐窗兜底
-                excluded = entries
-            }
-        } else {
-            excluded = entries
-        }
-
-        // 5. 兜底：逐窗单独截图（合成失败 / 裁剪全透明的项）
-        for entry in excluded {
+        // 2. 逐窗进行原生真实菜单栏截图
+        for entry in entries {
             guard let image = Bridging.captureWindow(entry.item.windowID),
+                  image.width > 0, image.height > 0,
                   !image.isFullyTransparent
             else {
                 result.failedKeys.insert(entry.item.iconCacheKey)
                 continue
             }
+            
+            // 自动裁剪透明边距并归一化倍率
+            let trimmed = image.trimmingTransparentPixels() ?? image
             let rawScale = CGFloat(image.width) / max(1, entry.bounds.width)
             let scale = validatedScale(rawScale) ?? max(1.0, rawScale.rounded())
-            result.images[entry.item.iconCacheKey] = CapturedIcon(cgImage: image, scale: scale)
+            result.images[entry.item.iconCacheKey] = CapturedIcon(cgImage: trimmed, scale: scale)
         }
 
         return result
@@ -436,9 +369,6 @@ public enum IconSourceType: String, Codable, Sendable {
 
 extension CGImage {
     /// 生成不共享父图像素内存的独立拷贝
-    ///
-    /// `cropping(to:)` 返回的子图共享父合成图的 backing store，
-    /// 会把整张合成图的生命周期钉在缓存里；拷贝出小图后父图即可释放。
     nonisolated func detachedCopy() -> CGImage? {
         guard width > 0, height > 0 else { return nil }
         guard
@@ -456,21 +386,18 @@ extension CGImage {
         return context.makeImage()
     }
 
-    /// 是否整张图全透明（未授权屏幕录制时系统会返回全透明占位图）
-    ///
-    /// 通过 CGContext 归一化像素格式后读 alpha 通道，避免不同
-    /// 字节序 / alpha 位置导致的误判。
+    /// 是否整张图全透明且无任何可见色彩内容（兼容 RGBA 与 XRGB 格式）
     nonisolated var isFullyTransparent: Bool {
-        guard width > 0, height > 0, bitsPerPixel >= 32 else { return false }
-        let bytesPerPixel = bitsPerPixel / 8
-        // 归一化为 RGBA（premultipliedLast，alpha 在每像素最后一字节）
+        guard width > 0, height > 0 else { return true }
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
         guard
             let context = CGContext(
                 data: nil,
                 width: width,
                 height: height,
                 bitsPerComponent: 8,
-                bytesPerRow: 0,
+                bytesPerRow: bytesPerRow,
                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
@@ -482,11 +409,91 @@ extension CGImage {
         for y in 0..<height {
             let rowBase = y * rowStride
             for x in 0..<width {
-                if ptr[rowBase + x * bytesPerPixel + 3] > 0 {
+                let pixelOffset = rowBase + x * bytesPerPixel
+                let r = ptr[pixelOffset]
+                let g = ptr[pixelOffset + 1]
+                let b = ptr[pixelOffset + 2]
+                let a = ptr[pixelOffset + 3]
+                // 任意通道存在可见内容即非全透明
+                if a > 4 && (r > 4 || g > 4 || b > 4) {
+                    return false
+                }
+                if a > 16 {
                     return false
                 }
             }
         }
         return true
+    }
+
+    /// 自动裁剪边缘全透明像素，提取真实有效图标核心内容（剥离系统状态栏自带的外层空隙）
+    nonisolated func trimmingTransparentPixels(alphaThreshold: UInt8 = 6) -> CGImage? {
+        guard width > 0, height > 0 else { return self }
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return self }
+        
+        context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return self }
+        let ptr = data.assumingMemoryBound(to: UInt8.self)
+        let rowStride = context.bytesPerRow
+        
+        var minX = width
+        var maxX = 0
+        var minY = height
+        var maxY = 0
+        var hasVisiblePixel = false
+        
+        for y in 0..<height {
+            let rowBase = y * rowStride
+            for x in 0..<width {
+                let pixelOffset = rowBase + x * bytesPerPixel
+                let r = ptr[pixelOffset]
+                let g = ptr[pixelOffset + 1]
+                let b = ptr[pixelOffset + 2]
+                let a = ptr[pixelOffset + 3]
+                
+                let isVisible = (a > alphaThreshold) || (r > 15 || g > 15 || b > 15)
+                if isVisible {
+                    hasVisiblePixel = true
+                    if x < minX { minX = x }
+                    if x > maxX { maxX = x }
+                    if y < minY { minY = y }
+                    if y > maxY { maxY = y }
+                }
+            }
+        }
+        
+        guard hasVisiblePixel, minX <= maxX, minY <= maxY else {
+            return self
+        }
+        
+        // 允许四周保留 1px 微安全边距，避免边缘抗锯齿裁切
+        let cropMinX = max(0, minX - 1)
+        let cropMinY = max(0, minY - 1)
+        let cropMaxX = min(width - 1, maxX + 1)
+        let cropMaxY = min(height - 1, maxY + 1)
+        
+        let cropWidth = cropMaxX - cropMinX + 1
+        let cropHeight = cropMaxY - cropMinY + 1
+        
+        // 若裁切区域与原图几乎相同（相差 <= 2px），直接返回原图
+        if cropWidth >= width - 2 && cropHeight >= height - 2 {
+            return self
+        }
+        
+        // CGImage.cropping 坐标系与 CGContext 一致（左上角为原点）
+        let cropRect = CGRect(x: cropMinX, y: cropMinY, width: cropWidth, height: cropHeight)
+        return self.cropping(to: cropRect)?.detachedCopy() ?? self
     }
 }

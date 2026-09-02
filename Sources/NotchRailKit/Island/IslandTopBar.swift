@@ -1,15 +1,36 @@
 import SwiftUI
 
+/// 纯 SwiftUI 矢量平滑旋转加载微光环（零 AppKit 宿主图层抖动，高清锐利）
+public struct IslandSpinner: View {
+    @State private var isRotating: Bool = false
+    
+    public init() {}
+    
+    public var body: some View {
+        Circle()
+            .trim(from: 0.15, to: 0.85)
+            .stroke(
+                Color.white.opacity(0.85),
+                style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
+            )
+            .frame(width: 11, height: 11)
+            .rotationEffect(.degrees(isRotating ? 360 : 0))
+            .onAppear {
+                withAnimation(.linear(duration: 0.85).repeatForever(autoreverses: false)) {
+                    isRotating = true
+                }
+            }
+    }
+}
+
 /// 灵动岛顶部左右通用的控制与状态栏（DRY：托盘黄色计数徽标 + 设置齿轮按钮）
 public struct IslandTopBar: View {
     public let overflowCount: Int
-    /// 跨屏同步中（快照与新屏不一致）：数字区显示脉动占位，不展示不可信的旧值
+    /// 跨屏同步/加载中：左耳翼展示旋转加载环；完成后平滑切换为数字徽标
     public var isSyncing: Bool = false
     /// 是否显示右侧设置齿轮（极简态隐藏：胶囊右侧与刘海平齐不遮挡原生图标，设置入口在展开态）
     public var showsSettingsButton: Bool = true
     public var onSettingsTapped: () -> Void = {}
-
-    @State private var pulseOn: Bool = false
 
     public init(
         overflowCount: Int = 0,
@@ -25,14 +46,19 @@ public struct IslandTopBar: View {
 
     public var body: some View {
         HStack {
-            // 左侧常态指示：黄色图标与溢出数量徽标（紧凑态下精准置于动态左耳翼可视发光区域）
-            if overflowCount > 0 {
+            // 左侧状态指示：加载中显示 IslandSpinner；加载完成后若有溢出显示黄色徽标
+            if isSyncing || overflowCount > 0 {
                 HStack(spacing: 4) {
-                    Image(systemName: "tray.full.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(IslandTheme.ColorPalette.TRAY_YELLOW)
+                    if isSyncing {
+                        IslandSpinner()
+                            .padding(.horizontal, 2)
+                    } else {
+                        Image(systemName: "tray.full.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(IslandTheme.ColorPalette.TRAY_YELLOW)
 
-                    countArea
+                        countArea
+                    }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -43,7 +69,7 @@ public struct IslandTopBar: View {
 
             Spacer()
 
-            // 右侧常态指示：设置齿轮按钮（极简态隐藏，展开时淡入）
+            // 右侧指示：展开态展示设置齿轮（紧凑态保持 0 延展平齐，不遮挡原生图标）
             if showsSettingsButton {
                 Button {
                     onSettingsTapped()
@@ -63,43 +89,24 @@ public struct IslandTopBar: View {
         .padding(.leading, 6)
         .padding(.trailing, 6)
         .animation(.easeOut(duration: 0.2), value: showsSettingsButton)
-        .animation(.easeOut(duration: 0.2), value: overflowCount > 0)
+        .animation(.easeOut(duration: 0.25), value: isSyncing)
+        .animation(.easeOut(duration: 0.25), value: overflowCount > 0)
     }
 
-    /// 数量展示区：同步中 → 脉动占位；可信 → 数字（变化时平滑滚动）
+    /// 数量展示区：数字展示（变化时平滑交叉溶解）
     @ViewBuilder
     private var countArea: some View {
-        ZStack {
-            if isSyncing {
-                // 脉动圆点（与图标加载占位同语言）；宽度对齐数字避免胶囊跳动
-                Circle()
-                    .fill(Color.white.opacity(0.7))
-                    .frame(width: 5, height: 5)
-                    .opacity(pulseOn ? 0.3 : 0.9)
-                    .frame(width: digitAreaWidth, alignment: .leading)
-                    .onAppear {
-                        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-                            pulseOn = true
-                        }
-                    }
-                    .transition(.opacity)
-            } else {
-                Text("\(overflowCount)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.9))
-                    .frame(minWidth: digitAreaWidth, alignment: .leading)
-                    // id 变化触发 identity 重建 → 与 .transition(.opacity) 配合实现数字交叉溶解
-                    .id(overflowCount)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.25), value: isSyncing)
-        .animation(.easeOut(duration: 0.3), value: overflowCount)
+        Text("\(overflowCount)")
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundColor(.white.opacity(0.9))
+            .frame(minWidth: digitAreaWidth, alignment: .leading)
+            .id(overflowCount)
+            .transition(.opacity)
+            .animation(.easeOut(duration: 0.3), value: overflowCount)
     }
 
-    /// 数字区宽度（按实际数字位数动态分配等宽宽度）
+    /// 数字区宽度（复用统一度量计算器）
     private var digitAreaWidth: CGFloat {
-        let countString = "\(overflowCount)"
-        return CGFloat(max(1, countString.count)) * 7.5 + 2.5
+        IslandWingMetrics.digitAreaWidth(for: overflowCount)
     }
 }
