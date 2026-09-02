@@ -6,6 +6,7 @@ public struct SettingsView: View {
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject var permissionManager = PermissionManager.shared
     @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
+    @ObservedObject private var iconResolver = IconResolver.shared
     
     @State private var selectedTab: Int = 0
     @State private var searchText: String = ""

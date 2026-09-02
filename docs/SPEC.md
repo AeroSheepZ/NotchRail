@@ -1,38 +1,30 @@
-# Specification: NotchRail 0.0.3 - Settings System & Interaction Polish
+# Specification: NotchRail 0.0.4 - Zero-Fallback Native Bitmaps, Dynamic Ear Wings & Multi-Display Isolation
 
 ## Problem Statement
 
-While NotchRail (v0.0.2) successfully established a zero-tampering, window-level extended menu bar via SkyLight window enumeration, direct window bitmap capture, and `CGEvent` click routing, user interaction and configuration options remained rigid:
+Following the initial release of NotchRail (v0.0.3), multi-display workflows and menu bar icon capture surfaced critical edge cases in real-world environments:
 
-1. **Inflexible Island Triggering**: The island only expanded via hover with a fixed timing model. Users who prefer explicit click activation or who frequently navigate near the top edge suffered from accidental expansions or lack of click-to-open capability.
-2. **Missing Interaction Toggles**: Post-click behavior was strictly hardcoded to collapse, haptic feedback was uncustomizable, and the compact pill persistently occupied space even when no items were hidden behind the notch.
-3. **Multi-Display Rigidity**: External non-notch displays unconditionally spawned an island that followed the cursor, without allowing users to restrict NotchRail strictly to their built-in MacBook display or disable it on external monitors.
-4. **Settings UI Gaps & Incomplete Controls**: The initial settings window lacked live permission re-validation, app search/filtering for blacklist configuration, manual bundle ID entry, and a dependable, prominent way to cleanly quit the application.
-5. **No Menu Bar Auxiliary Status Extra**: When running in agent mode (`LSUIElement = true`), users had no persistent tray icon to access settings, initiate re-scans, or safely exit without opening the expanded island.
+1. **Fallback Icon Degradation**: Systems that fell back to Dock/App icons violated native status bar aesthetics. True menu bar status items (like meters, single-glyph controls) must use 100% authentic WindowServer framebuffer captures.
+2. **Multi-Display Ear Wing Inheritance & Retraction Glitch**: When moving focus between displays with overflowed items and clean displays with 0 overflow, SwiftUI spring animation interpolation caused the new display to inherit the old display's expanded ear wing and visibly retract it on-screen.
+3. **ControlCenter 3rd-Party Namespace Collapse**: Modern macOS routes all 3rd-party status items via `ControlCenter.app` (`Item-0`), causing process-only queries to mislabel every third-party utility as "Control Center".
+4. **Dynamic Value Icon Stagnation**: Network speed monitors, heart rate meters, and clocks stopped updating dynamically due to aggressive memory cache preemption.
+5. **Settings Application List Disorder**: Application lists sorted non-overflowed items alphabetically instead of strictly preserving the physical right-to-left menu bar order.
 
 ## Solution
 
-NotchRail 0.0.3 delivers a comprehensive **Settings Architecture & Interaction Polish Suite**:
+NotchRail 0.0.4 establishes the **Deterministic WindowServer Mirror & AX Spatial Identity Suite**:
 
-1. **Multi-Mode Island Triggers (`TriggerMode`)**:
-   - `.hover`: Native hover with customizable debounce delay (50–300ms).
-   - `.click`: Hover disabled; expansion toggles explicitly upon clicking the compact pill.
-   - `.hoverAndClick`: Fast-path expansion on hover, with immediate click-to-toggle support.
-2. **Granular Interaction & Visibility Controls**:
-   - `autoCollapseOnClick`: Configurable auto-collapse upon successfully dispatching a click to an overflowed item.
-   - `enableHapticFeedback`: Haptic vibration feedback via `NSHapticFeedbackManager` during icon clicks and shake failure states.
-   - `hideWhenNoOverflow`: Option to completely hide the compact pill when all menu bar items fit natively on screen.
-3. **External Display Strategy (`ExternalDisplayMode`)**:
-   - `.followFocusedScreen`: Island dynamically follows key window focus and active screen clicks across displays (default).
-   - `.mainScreenOnly`: Island strictly anchors to the primary / built-in notch display.
-   - `.disabled`: Island is disabled on external non-notch monitors.
-4. **Native Auxiliary Status Item (`StatusItemManager`)**:
-   - Optional system status bar icon (`tray.full.fill`) providing quick actions: Toggle Island, Rescan Menu Bar, Preferences (⌘,), and Quit NotchRail (⌘Q).
-5. **Full-Featured Settings & Diagnostics Experience**:
-   - Live status reflection for Accessibility and Screen Recording permissions with instant refresh.
-   - App blacklist manager with fuzzy search, running status badges, manual Bundle ID addition, and one-click clear.
-   - Explicit "Quit NotchRail" action with system exit coordination (`NSApplication.shared.terminate`).
-   - "Reset to Recommended Defaults" button.
+1. **Zero-Fallback Real Framebuffer Capture (`IconResolver`)**:
+   - 100% single-item WindowServer capture (`CGWindowListCreateImageFromArray`), with Alpha/RGB bounding-box pixel trimming.
+   - Dynamic real-time pixel comparison (`CapturedIcon.isVisuallyEqual`): only modified pixel buffers update the UI; static items incur zero redraw cost.
+2. **Deterministic AX Spatial Identity Mapping (`MenuBarAXResolver`)**:
+   - Microsecond-level spatial index mapping against `AXExtrasMenuBar` to accurately resolve real process identities (WeChat, FlClash, Feishu, CC Switch, Snipaste, etc.) and original bundle identifiers.
+3. **Multi-Display View Identity Isolation (`IslandRootView`)**:
+   - Root container bound to `.id(geometry.displayID)`, eliminating cross-screen spring animation interpolation and ensuring instant Frame-0 geometry instantiation.
+4. **Native Physical Menu Bar Order Preservation (`SettingsView`)**:
+   - Strict tier ordering: Overflowed items (pinned, right-to-left) → Native visible items (reverse right-to-left) → Ignored items.
+5. **Pure SwiftUI Vector Indicator (`IslandSpinner`)**:
+   - Replaced AppKit `NSProgressIndicator` layer glitches with GPU-driven `IslandSpinner` in the left dynamic wing.
 
 ## User Stories
 

@@ -131,12 +131,11 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 主解析入口
 
-    /// 捕获进行中标记（串行化 WindowServer 捕获，防并发批次互相干扰）
-    /// 批量解析菜单栏项图标（阻塞式确定性装载：内存已有项 0ms 直出，未缓存项真实等待捕获入库）
+    /// 批量解析菜单栏项图标（内存已有项 0ms 瞬间直出，后台通过 isVisuallyEqual 动态增量比对实时刷新三方数值）
     public func resolveIcons(for items: [MenuBarItem]) async {
         guard !items.isEmpty else { return }
 
-        // 1. 已有内存缓存的项直接置为 loaded 状态（0ms 瞬间直出）
+        // 1. 已有内存缓存的项先置为 loaded 状态（0ms 瞬间直出，彻底杜绝空白占位）
         for item in items {
             let key = item.iconCacheKey
             if let cached = cache[key] {
@@ -144,16 +143,12 @@ public final class IconResolver: ObservableObject {
             }
         }
 
-        // 2. 筛选出未缓存的新项
-        let uncachedItems = items.filter { cache[$0.iconCacheKey] == nil }
-        guard !uncachedItems.isEmpty else { return }
-
-        // 3. 未授权屏幕录制时直接返回
+        // 2. 未授权屏幕录制时直接返回
         guard CGPreflightScreenCaptureAccess() else { return }
 
-        // 4. 阻塞式执行后台捕获管线，确保返回前所有未缓存项 100% 完成截图并装载入库
-        let result = await Self.capturePipeline(uncachedItems, blacklistedKeys: [])
-        apply(result, to: uncachedItems)
+        // 3. 执行后台捕获管线，由 apply 内部的 isVisuallyEqual 像素比对动态更新三方网速/天气/时钟数值
+        let result = await Self.capturePipeline(items, blacklistedKeys: [])
+        apply(result, to: items)
     }
 
     /// 兼容旧调用方的同步快照式 API

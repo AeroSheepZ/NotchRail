@@ -40,8 +40,8 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         // 1. 立即执行一次全屏极速扫描与预热（展示完整加载动画）
         scheduleSync(immediate: true, showProgress: true)
         
-        // 2. 启动 5.0s 空闲退避静默心跳
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // 2. 启动 2.5s 静默心跳（自动驱动三方网速、CPU与时钟动态刷新）
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.scheduleSync(immediate: false, showProgress: false)
             }

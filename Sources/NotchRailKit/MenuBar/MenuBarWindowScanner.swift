@@ -12,6 +12,7 @@ public actor MenuBarWindowScanner {
     public func scanMenuBarItems(for geometry: NotchGeometry) async -> [MenuBarItem] {
         let windowIDs = Bridging.menuBarWindowIDs()
         let screenBounds = CGDisplayBounds(geometry.displayID)
+        let axEntries = await MenuBarAXResolver.shared.latestEntries()
         
         var items: [MenuBarItem] = []
 
@@ -23,11 +24,17 @@ public actor MenuBarWindowScanner {
             guard info.frame.width < screenBounds.width * 0.85 else { continue }
 
             let app = NSRunningApplication(processIdentifier: info.ownerPID)
+            let (resolvedTitle, resolvedBundleID) = Self.resolveIdentity(
+                for: info,
+                app: app,
+                axEntries: axEntries
+            )
+
             let item = MenuBarItem(
                 windowID: info.windowID,
                 processIdentifier: info.ownerPID,
-                bundleIdentifier: Self.resolveBundleIdentifier(for: info, app: app),
-                title: Self.displayName(for: info, app: app),
+                bundleIdentifier: resolvedBundleID,
+                title: resolvedTitle,
                 nativeFrame: info.frame,
                 displayMode: .nativeVisible,
                 capability: .standardAXPress,
@@ -41,67 +48,49 @@ public actor MenuBarWindowScanner {
         return items
     }
 
-    // MARK: - 名称与 Bundle 解析
+    // MARK: - 真实身份与 Bundle 解析
 
-    private static func resolveBundleIdentifier(for info: Bridging.WindowDescriptor, app: NSRunningApplication?) -> String? {
-        if let appBundle = app?.bundleIdentifier, !appBundle.isEmpty {
-            return appBundle
-        }
-        if let name = info.title, name.hasPrefix("com.") || name.hasPrefix("org.") || name.hasPrefix("io.") || name.hasPrefix("net.") {
-            return name
-        }
-        return nil
-    }
-
-    private static func displayName(
+    private static func resolveIdentity(
         for info: Bridging.WindowDescriptor,
-        app: NSRunningApplication?
-    ) -> String {
-        let bundleID = app?.bundleIdentifier ?? ""
-        let isSystemControlCenter = bundleID == "com.apple.controlcenter" || bundleID == "com.apple.systemuiserver"
+        app: NSRunningApplication?,
+        axEntries: [MenuBarAXResolver.Entry]
+    ) -> (title: String, bundleID: String?) {
+        let windowTitle = info.title ?? ""
 
-        // 1. 系统控制中心各项（时钟、电池、WiFi、声音等）
-        if isSystemControlCenter {
-            if let windowName = info.title, !windowName.isEmpty {
-                if let friendly = systemItemFriendlyName(windowName) {
-                    return friendly
-                }
-            }
-            if let axName = MenuBarAXResolver.resolveName(forPID: info.ownerPID, frame: info.frame) {
-                if let friendly = systemItemFriendlyName(axName) {
-                    return friendly
-                }
-                return axName
-            }
-            return "控制中心"
+        // 1. 系统核心组件直接按窗口名精准映射
+        if let friendlySystemName = systemItemFriendlyName(windowTitle) {
+            return (friendlySystemName, "com.apple.controlcenter")
         }
 
-        // 2. 第三方应用：100% 绑定其实际归属进程本地化名称（杜绝跨进程错乱）
-        if let appName = app?.localizedName, !appName.isEmpty {
-            return appName
+        // 2. 浏览器/Safari 扩展窗口（extension_mole_...）
+        if windowTitle.hasPrefix("extension_") {
+            return ("浏览器扩展", "com.apple.controlcenter")
         }
 
-        // 3. 次选：通过 Bundle Identifier 反查本地化名称
-        if let windowName = info.title, !windowName.isEmpty {
-            if windowName.hasPrefix("com.") || windowName.hasPrefix("org.") || windowName.hasPrefix("io.") || windowName.hasPrefix("net.") {
-                if let locName = localizedAppName(forBundleID: windowName) {
-                    return locName
-                }
-            }
-            if let friendly = systemItemFriendlyName(windowName) {
-                return friendly
-            }
-            if windowName != "Item-0" && !windowName.contains(".") {
-                return windowName
-            }
+        // 3. 优先通过 AX 空间坐标表映射回真实的第三方应用
+        if let axEntry = MenuBarAXResolver.resolveApp(forFrame: info.frame, in: axEntries) {
+            let title = (axEntry.title?.isEmpty == false ? axEntry.title : nil)
+                ?? (axEntry.description?.isEmpty == false ? axEntry.description : nil)
+                ?? axEntry.appName
+            return (title, axEntry.bundleIdentifier)
         }
 
-        // 4. 进程名兜底
-        if let ownerName = info.ownerName, !ownerName.isEmpty {
-            return ownerName
+        // 4. 次选：通过 WindowServer 标题中的 Bundle ID 反查
+        if windowTitle.hasPrefix("com.") || windowTitle.hasPrefix("org.") || windowTitle.hasPrefix("io.") || windowTitle.hasPrefix("net.") {
+            let locName = localizedAppName(forBundleID: windowTitle) ?? windowTitle
+            return (locName, windowTitle)
         }
 
-        return "菜单栏项"
+        // 5. 归属进程本地化名兜底（排除控制中心宿主名）
+        if let appName = app?.localizedName, !appName.isEmpty, appName != "ControlCenter", appName != "控制中心" {
+            return (appName, app?.bundleIdentifier)
+        }
+
+        if !windowTitle.isEmpty && windowTitle != "Item-0" {
+            return (windowTitle, app?.bundleIdentifier)
+        }
+
+        return ("菜单栏项", app?.bundleIdentifier)
     }
 
     private static func systemItemFriendlyName(_ name: String) -> String? {
@@ -123,7 +112,6 @@ public actor MenuBarWindowScanner {
         case "User", "Users": return "快速用户切换"
         case "apple.passwords": return "密码"
         default:
-            if name.hasPrefix("extension_") { return "浏览器扩展" }
             return nil
         }
     }
