@@ -385,14 +385,8 @@ public struct SettingsView: View {
     }
     
     /// 统一装配应用列表条目（严格只使用原生菜单栏真实截图）
-    private func resolveAppEntry(
-        item: MenuBarItem,
-        index: Int,
-        bundleID: String,
-        isOverflowed: Bool,
-        isNativeVisible: Bool,
-        isIgnored: Bool
-    ) -> AppListEntry {
+    private func resolveAppEntry(item: MenuBarItem, index: Int) -> AppListEntry {
+        let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
         let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
         let title = item.title ?? runningApp?.localizedName ?? bundleID
         
@@ -409,37 +403,23 @@ public struct SettingsView: View {
             originalIndex: index,
             title: title,
             bundleID: bundleID,
-            isOverflowed: isOverflowed,
-            isNativeVisible: isNativeVisible,
-            isIgnored: isIgnored,
+            isOverflowed: item.displayMode == .overflowed,
+            isNativeVisible: item.displayMode == .nativeVisible,
+            isIgnored: item.displayMode == .ignored,
             statusIcon: statusImage
         )
     }
     
     private func filteredItems() -> [AppListEntry] {
         let prefs = preferenceStore.preferences
-        let geom = (prefs.externalDisplayMode == .mainScreenOnly)
-            ? ScreenManager.shared.primaryGeometry
-            : ScreenManager.shared.currentGeometry
+        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         let currentSnapshot = syncCoordinator.snapshot(for: geom.displayID) ?? syncCoordinator.latestSnapshot
         let menuBarItems = currentSnapshot?.allItems ?? []
         var result: [AppListEntry] = []
         
         // 1. 从单一真实快照中装配当前活动屏幕菜单栏项
         for (index, item) in menuBarItems.enumerated() {
-            let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
-            let isIgnored = item.displayMode == .ignored
-            let isOverflowed = item.displayMode == .overflowed
-            let isNativeVisible = item.displayMode == .nativeVisible
-            
-            let entry = resolveAppEntry(
-                item: item,
-                index: index,
-                bundleID: bundleID,
-                isOverflowed: isOverflowed,
-                isNativeVisible: isNativeVisible,
-                isIgnored: isIgnored
-            )
+            let entry = resolveAppEntry(item: item, index: index)
             result.append(entry)
         }
         

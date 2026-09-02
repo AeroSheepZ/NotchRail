@@ -54,13 +54,15 @@ public actor MenuBarAXResolver {
             let element = AXUIElementCreateApplication(app.processIdentifier)
             var extras: CFTypeRef?
             guard AXUIElementCopyAttributeValue(element, "AXExtrasMenuBar" as CFString, &extras) == .success,
-                  let extrasElem = extras
+                  let extrasElem = extras,
+                  CFGetTypeID(extrasElem) == AXUIElementGetTypeID()
             else {
                 continue
             }
+            let extrasUIElem = extrasElem as! AXUIElement
 
             var children: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(extrasElem as! AXUIElement, "AXChildren" as CFString, &children) == .success,
+            guard AXUIElementCopyAttributeValue(extrasUIElem, "AXChildren" as CFString, &children) == .success,
                   let childrenArr = children as? [AXUIElement]
             else {
                 continue

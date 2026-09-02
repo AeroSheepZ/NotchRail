@@ -13,9 +13,7 @@ public struct IslandRootView: View {
     
     public var body: some View {
         let prefs = preferenceStore.preferences
-        let geometry = (prefs.externalDisplayMode == .mainScreenOnly)
-            ? screenManager.primaryGeometry
-            : screenManager.currentGeometry
+        let geometry = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         
         let targetSnapshot = syncCoordinator.snapshot(for: geometry.displayID)
         let isSyncing = syncCoordinator.isPrewarming || (targetSnapshot == nil)

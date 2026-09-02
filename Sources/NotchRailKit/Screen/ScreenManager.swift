@@ -22,6 +22,16 @@ public final class ScreenManager: ObservableObject {
             ?? allGeometries.first
             ?? currentGeometry
     }
+
+    /// 根据多显示器偏好策略计算当前应生效的目标屏幕几何配置
+    public func effectiveGeometry(for mode: ExternalDisplayMode) -> NotchGeometry {
+        switch mode {
+        case .followFocusedScreen, .disabled:
+            return currentGeometry
+        case .mainScreenOnly:
+            return primaryGeometry
+        }
+    }
     
     private var cancellables = Set<AnyCancellable>()
     

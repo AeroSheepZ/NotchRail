@@ -146,8 +146,9 @@ public final class IconResolver: ObservableObject {
         // 2. 未授权屏幕录制时直接返回
         guard CGPreflightScreenCaptureAccess() else { return }
 
-        // 3. 执行后台捕获管线，由 apply 内部的 isVisuallyEqual 像素比对动态更新三方网速/天气/时钟数值
-        let result = await Self.capturePipeline(items, blacklistedKeys: [])
+        // 3. 获取失败冷却黑名单并执行后台捕获管线，由 apply 内部的 isVisuallyEqual 像素比对动态更新三方网速/天气/时钟数值
+        let blacklisted = currentlyBlacklistedKeys()
+        let result = await Self.capturePipeline(items, blacklistedKeys: blacklisted)
         apply(result, to: items)
     }
 
@@ -189,10 +190,6 @@ public final class IconResolver: ObservableObject {
                 failedCaptures.removeValue(forKey: key)
             } else if result.failedKeys.contains(key) {
                 recordFailure(for: key)
-                if iconStates[key] != .failed {
-                    iconStates[key] = .failed
-                    statesChanged = true
-                }
             }
             // 既无图像也无失败（被黑名单跳过 / 无窗口 bounds）→ 保持原状态
         }
@@ -284,10 +281,11 @@ public final class IconResolver: ObservableObject {
     ) async -> CaptureResult {
         var result = CaptureResult()
 
-        // 1. 收集有效窗口 ID
+        // 1. 收集有效窗口 ID（过滤处于冷却中的黑名单键）
         var entries: [(item: MenuBarItem, bounds: CGRect)] = []
         for item in items {
             guard item.windowID != 0 else { continue }
+            guard !blacklistedKeys.contains(item.iconCacheKey) else { continue }
             let bounds = Bridging.frame(for: item.windowID) ?? item.nativeFrame
             entries.append((item, bounds))
         }
@@ -344,25 +342,28 @@ public final class IconResolver: ObservableObject {
 
 /// 描述图标最终解析结果（兼容旧调用方）
 public struct ResolvedIcon: Sendable {
-    public let image: NSImage?
-    public let sourceType: IconSourceType
+    public let image: NSImage
+    public let sourceType: SourceType
     public let label: String
 
-    public init(image: NSImage?, sourceType: IconSourceType, label: String) {
+    public enum SourceType: String, Sendable {
+        case screenCapture
+        case appBundle
+        case fallbackSymbol
+    }
+
+    public init(image: NSImage, sourceType: SourceType, label: String) {
         self.image = image
         self.sourceType = sourceType
         self.label = label
     }
 }
 
-/// 图标来源（兼容旧调用方）
-public enum IconSourceType: String, Codable, Sendable {
-    case screenCapture // 按 windowID 截取窗口真实画面（唯一来源）
-}
-
-// MARK: - CGImage 工具
+// MARK: - CGImage 辅助扩展（跨格式像素分析与自动裁剪）
 
 extension CGImage {
+    private static let sRGBColorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+
     /// 生成不共享父图像素内存的独立拷贝
     nonisolated func detachedCopy() -> CGImage? {
         guard width > 0, height > 0 else { return nil }
@@ -373,7 +374,7 @@ extension CGImage {
                 height: height,
                 bitsPerComponent: 8,
                 bytesPerRow: 0,
-                space: colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                space: colorSpace ?? Self.sRGBColorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
         else { return nil }
@@ -393,7 +394,7 @@ extension CGImage {
                 height: height,
                 bitsPerComponent: 8,
                 bytesPerRow: bytesPerRow,
-                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                space: Self.sRGBColorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
         else { return false }
@@ -413,17 +414,14 @@ extension CGImage {
                 if a > 4 && (r > 4 || g > 4 || b > 4) {
                     return false
                 }
-                if a > 16 {
-                    return false
-                }
             }
         }
         return true
     }
 
-    /// 自动裁剪边缘全透明像素，提取真实有效图标核心内容（剥离系统状态栏自带的外层空隙）
+    /// 自动裁剪边缘全透明像素
     nonisolated func trimmingTransparentPixels(alphaThreshold: UInt8 = 6) -> CGImage? {
-        guard width > 0, height > 0 else { return self }
+        guard width > 0, height > 0 else { return nil }
         let bytesPerPixel = 4
         let bytesPerRow = width * bytesPerPixel
         guard
@@ -433,10 +431,10 @@ extension CGImage {
                 height: height,
                 bitsPerComponent: 8,
                 bytesPerRow: bytesPerRow,
-                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                space: Self.sRGBColorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
-        else { return self }
+        else { return nil }
         
         context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
         guard let data = context.data else { return self }

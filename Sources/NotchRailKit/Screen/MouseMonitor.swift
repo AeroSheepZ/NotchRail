@@ -90,9 +90,7 @@ public final class MouseMonitor {
         }
         
         let prefs = PreferenceStore.shared.preferences
-        let geom = (prefs.externalDisplayMode == .mainScreenOnly)
-            ? ScreenManager.shared.primaryGeometry
-            : ScreenManager.shared.currentGeometry
+        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         
         let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
             ?? MenuBarSyncCoordinator.shared.latestSnapshot
