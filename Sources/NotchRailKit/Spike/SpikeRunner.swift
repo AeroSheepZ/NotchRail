@@ -222,13 +222,13 @@ public enum SpikeRunner {
             processIdentifier: 601,
             bundleIdentifier: "com.border.exact",
             title: "BorderExact",
-            nativeFrame: CGRect(x: 836, y: 955, width: 30, height: 24)
+            nativeFrame: CGRect(x: 848, y: 955, width: 30, height: 24)
         )
         let justInsideNotchItem = MenuBarItem(
             processIdentifier: 602,
             bundleIdentifier: "com.border.inside",
             title: "BorderInside",
-            nativeFrame: CGRect(x: 835.5, y: 955, width: 30, height: 24)
+            nativeFrame: CGRect(x: 847.5, y: 955, width: 30, height: 24)
         )
         let borderSnapshot = OverflowCalculator.resolve(items: [exactBorderItem, justInsideNotchItem], geometry: mockGeometry)
         check(borderSnapshot.visibleItems.count == 1 && borderSnapshot.visibleItems.first?.title == "BorderExact", "Test 6: Exact border item should be visible")

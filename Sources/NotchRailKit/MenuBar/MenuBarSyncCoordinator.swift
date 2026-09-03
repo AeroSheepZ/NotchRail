@@ -33,9 +33,9 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         return snapshotsByDisplay[displayID]
     }
     
-    /// 获取指定屏幕的有效快照（自动兜底回退全局最新快照，消除调用方重复三元判断）
+    /// 获取指定屏幕的有效快照（单屏物理隔离，严禁跨屏借用兜底 AGENTS.md 2.1）
     public func effectiveSnapshot(for displayID: CGDirectDisplayID) -> MenuBarSnapshot? {
-        return snapshotsByDisplay[displayID] ?? latestSnapshot
+        return snapshotsByDisplay[displayID]
     }
     
     /// 启动工作区监听与自动同步
@@ -45,10 +45,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         // 1. 立即执行一次全屏极速扫描与预热（展示完整加载动画）
         scheduleSync(immediate: true, showProgress: true)
         
-        // 2. 启动 2.5s 静默心跳（自动驱动三方网速、CPU与时钟动态刷新）
+        // 2. 启动 2.5s 静默心跳（仅在非扫描空闲期触发动态数值轻量刷新，绝不推挤重扫队列）
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.scheduleSync(immediate: false, showProgress: false)
+                guard let self = self, !self.isScanning else { return }
+                self.scheduleSync(immediate: false, showProgress: false)
             }
         }
     }
@@ -79,18 +80,20 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     
     /// 执行后台扫描、多屏预热与图标同步解析
     private func performSync(showProgress: Bool = true) {
+        let currentGeom = ScreenManager.shared.currentGeometry
         guard !isScanning else {
-            pendingResync = true
+            if showProgress {
+                pendingResync = true
+            }
             return
         }
         isScanning = true
-        if showProgress || latestSnapshot == nil {
+        if showProgress || snapshotsByDisplay[currentGeom.displayID] == nil {
             isPrewarming = true
         }
         pendingResync = false
         let startTime = Date()
         
-        let currentGeom = ScreenManager.shared.currentGeometry
         let allGeometries = ScreenManager.shared.allGeometries
         let ignoredIDs = Set(PreferenceStore.shared.preferences.ignoredBundleIDs)
         
@@ -156,6 +159,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 self.isScanning = false
                 
                 if self.pendingResync {
+                    self.pendingResync = false
                     self.performSync(showProgress: false)
                 }
             }
@@ -166,13 +170,26 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     private func setupSystemObservers() {
         let center = NSWorkspace.shared.notificationCenter
         
-        // 监听应用启动与退出
+        // 监听应用启动与退出（排除自身）
+        let ownPID = getpid()
         center.publisher(for: NSWorkspace.didLaunchApplicationNotification)
-            .sink { [weak self] _ in self?.scheduleSync() }
+            .sink { [weak self] notif in
+                if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                   app.processIdentifier == ownPID {
+                    return
+                }
+                self?.scheduleSync()
+            }
             .store(in: &cancellables)
         
         center.publisher(for: NSWorkspace.didTerminateApplicationNotification)
-            .sink { [weak self] _ in self?.scheduleSync() }
+            .sink { [weak self] notif in
+                if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                   app.processIdentifier == ownPID {
+                    return
+                }
+                self?.scheduleSync()
+            }
             .store(in: &cancellables)
         
         // 监听应用隐藏与取消隐藏

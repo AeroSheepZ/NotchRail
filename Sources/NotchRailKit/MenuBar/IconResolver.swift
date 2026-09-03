@@ -179,8 +179,12 @@ public final class IconResolver: ObservableObject {
         for item in items {
             let key = item.iconCacheKey
             if let icon = result.images[key] {
-                // 视觉相等 → 不更新（不触发重渲染）
-                if !CapturedIcon.isVisuallyEqual(cache[key], icon) {
+                // 视觉相等且已发布 loaded 态 → 不更新（不触发重渲染）
+                let isAlreadyLoaded: Bool = {
+                    if case .loaded = iconStates[key] { return true }
+                    return false
+                }()
+                if !CapturedIcon.isVisuallyEqual(cache[key], icon) || !isAlreadyLoaded {
                     cache[key] = icon
                     iconStates[key] = .loaded(icon.nsImage)
                     touchAccessOrder(for: key)
@@ -194,8 +198,13 @@ public final class IconResolver: ObservableObject {
                     iconStates[key] = .failed
                     statesChanged = true
                 }
+            } else {
+                // 被黑名单冷却跳过或无有效窗口 bounds：显式标记为 .failed 静态弱化态，绝不悬空为 nil/pending
+                if iconStates[key] == nil || iconStates[key] == .pending {
+                    iconStates[key] = .failed
+                    statesChanged = true
+                }
             }
-            // 既无图像也无失败（被黑名单跳过 / 无窗口 bounds）→ 保持原状态
         }
 
         if statesChanged {
@@ -414,8 +423,8 @@ extension CGImage {
                 let g = ptr[pixelOffset + 1]
                 let b = ptr[pixelOffset + 2]
                 let a = ptr[pixelOffset + 3]
-                // 任意通道存在可见内容即非全透明
-                if a > 4 && (r > 4 || g > 4 || b > 4) {
+                // 任意通道存在可见内容（透明度或色彩通道）即非全透明
+                if a > 4 || (r > 4 || g > 4 || b > 4) {
                     return false
                 }
             }

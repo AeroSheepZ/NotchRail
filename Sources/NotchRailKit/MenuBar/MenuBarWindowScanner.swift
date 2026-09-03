@@ -23,6 +23,7 @@ public actor MenuBarWindowScanner {
             guard info.frame.width > 2 && info.frame.height > 2 else { continue }
             guard info.frame.width < screenBounds.width * 0.85 else { continue }
 
+            await MenuBarAXResolver.shared.registerCandidatePID(info.ownerPID)
             let app = NSRunningApplication(processIdentifier: info.ownerPID)
             let (resolvedTitle, resolvedBundleID) = Self.resolveIdentity(
                 for: info,
