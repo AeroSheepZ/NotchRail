@@ -54,6 +54,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     public let compactBounds: CGRect
     public let extendedBounds: CGRect
     public let statusBarHeight: CGFloat
+    public let isFullScreenSpace: Bool
     
     public init(
         displayID: CGDirectDisplayID,
@@ -67,7 +68,8 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         physicalNotchRect: CGRect,
         compactBounds: CGRect,
         extendedBounds: CGRect,
-        statusBarHeight: CGFloat = 24.0
+        statusBarHeight: CGFloat = 24.0,
+        isFullScreenSpace: Bool = false
     ) {
         self.displayID = displayID
         self.displayName = displayName
@@ -81,6 +83,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         self.compactBounds = compactBounds
         self.extendedBounds = extendedBounds
         self.statusBarHeight = statusBarHeight
+        self.isFullScreenSpace = isFullScreenSpace
     }
     
     public static func == (lhs: NotchGeometry, rhs: NotchGeometry) -> Bool {
@@ -95,19 +98,15 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
                lhs.compactBounds == rhs.compactBounds &&
                lhs.extendedBounds == rhs.extendedBounds &&
                lhs.statusBarHeight == rhs.statusBarHeight &&
+               lhs.isFullScreenSpace == rhs.isFullScreenSpace &&
                lhs.safeAreaInsets.top == rhs.safeAreaInsets.top &&
                lhs.safeAreaInsets.bottom == rhs.safeAreaInsets.bottom &&
                lhs.safeAreaInsets.left == rhs.safeAreaInsets.left &&
                lhs.safeAreaInsets.right == rhs.safeAreaInsets.right
     }
 
-    /// 是否处于全屏应用空间（原生菜单栏被系统自动折叠隐藏）
-    public var isFullScreenSpace: Bool {
-        // 当可见区域顶部贴紧屏幕物理顶部（无菜单栏占位高度）时，即处于全屏应用空间
-        return visibleFrame.maxY >= screenFrame.maxY - 1.0
-    }
-
-    /// 检查指定坐标是否处于屏幕物理顶边缘唤醒热区
+    /// 检查指定坐标是否处于屏幕物理顶边缘触发热区
+    /// 严格遵守 Spec L19：光标推至屏幕物理顶边缘（<= 2pt）触发唤醒，杜绝全屏观影划过刘海中下部引起误唤醒
     public func isPointInTopEdgeHotZone(_ point: CGPoint, threshold: CGFloat = 2.0) -> Bool {
         guard point.x >= screenFrame.minX && point.x <= screenFrame.maxX else { return false }
         return point.y >= screenFrame.maxY - threshold && point.y <= screenFrame.maxY + 5.0

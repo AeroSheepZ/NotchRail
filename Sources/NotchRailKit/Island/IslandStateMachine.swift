@@ -4,14 +4,20 @@ import Combine
 
 /// 灵动岛生命周期状态
 public enum IslandDisplayState: String, Equatable, Sendable {
-    case compact       // 紧凑常驻胶囊态
-    case hoverPending  // 鼠标进入感应区，防抖判定中
-    case extended      // 展开扩展菜单栏态
-    case collapsing    // 鼠标移出，收起宽限期判定中
+    case compact           // 紧凑常驻胶囊态
+    case hoverPending      // 鼠标进入感应区，防抖判定中
+    case extended          // 展开扩展菜单栏态
+    case collapsing        // 鼠标移出，收起宽限期判定中
+    case fullScreenHidden  // 全屏沉浸隐退态（完全透明且穿透）
     
     /// 当前是否处于展开或正在收起的可见状态
     public var isExpanded: Bool {
         return self == .extended || self == .collapsing
+    }
+    
+    /// 当前是否处于全屏隐退状态
+    public var isFullScreenHidden: Bool {
+        return self == .fullScreenHidden
     }
 }
 
@@ -48,12 +54,33 @@ public final class IslandStateMachine: ObservableObject {
         self.collapseDelay = prefs.collapseDelayMs / 1000.0
     }
     
+    /// 进入全屏空间沉浸隐退态
+    public func enterFullScreenHidden() {
+        debounceTimer?.invalidate()
+        debounceTimer = nil
+        collapseTimer?.invalidate()
+        collapseTimer = nil
+        guard currentState != .fullScreenHidden else { return }
+        currentState = .fullScreenHidden
+    }
+    
+    /// 全屏顶边缘碰顶唤醒至紧凑态
+    public func awakenFromFullScreen() {
+        guard currentState == .fullScreenHidden else { return }
+        currentState = .compact
+    }
+    
     /// 鼠标移入灵动岛热区
     public func handleMouseEnter(overflowCount: Int = 0) {
         collapseTimer?.invalidate()
         collapseTimer = nil
         
         self.activeOverflowCount = overflowCount
+        
+        // 若处于全屏隐藏态，优先唤醒至紧凑态
+        if currentState == .fullScreenHidden {
+            currentState = .compact
+        }
         
         let triggerMode = PreferenceStore.shared.preferences.triggerMode
         // 若为「仅点击」模式，悬停不触发展开防抖计时
@@ -72,7 +99,7 @@ public final class IslandStateMachine: ObservableObject {
             // 宽限期内鼠标重新移入，取消收起并恢复展开态
             currentState = .extended
             
-        case .hoverPending, .extended:
+        case .hoverPending, .extended, .fullScreenHidden:
             break
         }
     }
@@ -102,7 +129,7 @@ public final class IslandStateMachine: ObservableObject {
                 }
             }
             
-        case .compact, .collapsing:
+        case .compact, .collapsing, .fullScreenHidden:
             break
         }
     }

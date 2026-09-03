@@ -51,9 +51,18 @@ NotchRail 0.0.5 delivers **Full-Screen Immersive Space Coordination & Edge Awake
   - Cursor reaching top boundary ($Y \le 2\text{pt}$) $\implies$ Island transitions to standard `compact` with alpha `1.0`.
   - Cursor leaving island and top boundary $\implies$ Island fades out after grace period (default 300ms).
 
-### 3. Pure Public API Boundaries
+### 3. Pure Public API Boundaries & AX Spatial Verification
 - Strictly avoid private SkyLight Space notification APIs (`CGSGetActiveSpace`) to guarantee zero deprecation risks and full forward-compatibility across macOS 14, 15, and future releases.
 - Coordinate edge events through existing `MouseMonitor` global event streams (`kCGEventMouseMoved`).
+- For multi-space and external display isolation in background agent mode (`LSUIElement = true`), verify frontmost application window status via public Accessibility API (`AXFullScreen` attribute) in normalized Quartz display coordinates (`CGDisplayBounds`).
+
+### 4. Pure Geometric Physical Overflow Calculation
+- Overflow status must be evaluated exclusively against physical screen and notch geometric boundaries (`frame.minX < notchRightEdge + 12.0` or out-of-screen bounds).
+- Never rely on transient WindowServer visibility markers like `!item.isOnScreen`, because macOS collapses status bar items in full screen and space transitions, which would misclassify normal visible items as overflowed.
+
+### 5. Settings App Management Native macOS UI
+- App management list conforms to native macOS System Settings styling: `Color(nsColor: .controlBackgroundColor)`, `.primary`, `.secondary`, and native `Divider()`.
+- Provides a dedicated high-contrast dark tile container for status bar icons to ensure white and monochrome icons remain distinct across both light and dark system appearances.
 
 ## Testing Decisions
 

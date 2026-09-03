@@ -25,12 +25,9 @@ public final class IslandHostingView<Content: View>: NSHostingView<Content> {
     /// 计算当前在本地视图坐标系（以左下角为原点）内的有效灵动岛胶囊区域
     private var currentIslandBounds: NSRect {
         let prefs = PreferenceStore.shared.preferences
-        let geom = (prefs.externalDisplayMode == .mainScreenOnly)
-            ? ScreenManager.shared.primaryGeometry
-            : ScreenManager.shared.currentGeometry
+        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         
-        let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
-            ?? MenuBarSyncCoordinator.shared.latestSnapshot
+        let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let hasNoOverflow = overflowCount == 0
         let isExpanded = IslandStateMachine.shared.currentState.isExpanded

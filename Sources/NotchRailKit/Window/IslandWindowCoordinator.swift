@@ -124,72 +124,62 @@ public final class IslandWindowCoordinator: ObservableObject {
         }
         
         // 2. 检查目标屏幕多屏预热快照
-        let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: effectiveGeom.displayID)
-            ?? MenuBarSyncCoordinator.shared.latestSnapshot
+        let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: effectiveGeom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let hasNoOverflow = overflowCount == 0
         let isScreenSwitching = (lastActiveDisplayID != nil && lastActiveDisplayID != effectiveGeom.displayID)
         self.lastActiveDisplayID = effectiveGeom.displayID
         
-        // 3. 切屏时无论目标屏有无溢出，均原子重置展开态，确保到达新屏幕时处于纯净紧凑态
-        if isScreenSwitching {
+        // 3. 切屏或处于未唤醒全屏空间时，原子重置展开态，确保到达新屏幕或全屏时处于纯净紧凑态
+        if isScreenSwitching || (effectiveGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen) {
             if IslandStateMachine.shared.currentState.isExpanded {
                 IslandStateMachine.shared.triggerCollapse()
             }
         }
         
+        // 4. 普通桌面空间且状态机处于 fullScreenHidden 时，主动闭环唤醒恢复 compact (Spec L49-50)
+        if !effectiveGeom.isFullScreenSpace && IslandStateMachine.shared.currentState.isFullScreenHidden {
+            IslandStateMachine.shared.awakenFromFullScreen()
+        }
+        
         let isExpanded = IslandStateMachine.shared.currentState.isExpanded
         let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && hasNoOverflow && !isExpanded
-        let isFullScreenHidden = effectiveGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen
+        let isFullScreenHidden = IslandStateMachine.shared.currentState.isFullScreenHidden ||
+                                (effectiveGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
         
         let targetViewport = calculateViewportBounds(for: effectiveGeom)
         
         if isFullScreenHidden || shouldHideForNoOverflow {
             panel.ignoresMouseEvents = true
-            // 切屏时先在原屏立即置 0 透明度，再迁移坐标，彻底杜绝闪烁残影
-            if isScreenSwitching {
-                panel.alphaValue = 0.0
-                if panel.frame != targetViewport {
-                    panel.setFrame(targetViewport, display: true)
-                }
-            } else {
-                if panel.frame != targetViewport {
-                    panel.setFrame(targetViewport, display: true)
-                }
-                if panel.alphaValue > 0.0 {
-                    NSAnimationContext.runAnimationGroup { context in
-                        context.duration = 0.20
-                        panel.animator().alphaValue = 0.0
-                    }
-                } else {
-                    panel.alphaValue = 0.0
-                }
-            }
+            updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 0.0, duration: 0.20, immediate: isScreenSwitching)
         } else {
             panel.ignoresMouseEvents = false
-            if isScreenSwitching {
-                panel.alphaValue = 0.0
-                if panel.frame != targetViewport {
-                    panel.setFrame(targetViewport, display: true)
-                }
-                panel.orderFrontRegardless()
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.18
-                    panel.animator().alphaValue = 1.0
-                }
-            } else {
-                if panel.frame != targetViewport {
-                    panel.setFrame(targetViewport, display: true)
-                }
-                panel.orderFrontRegardless()
-                if panel.alphaValue < 1.0 {
-                    NSAnimationContext.runAnimationGroup { context in
-                        context.duration = 0.18
-                        panel.animator().alphaValue = 1.0
-                    }
-                } else {
-                    panel.alphaValue = 1.0
-                }
+            panel.orderFrontRegardless()
+            updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 1.0, duration: 0.18, immediate: false, preZeroAlpha: isScreenSwitching)
+        }
+    }
+    
+    /// 统一驱动视口坐标迁移与透明度平滑过渡（消除重复代码）
+    private func updatePanelViewport(
+        _ panel: IslandPanel,
+        targetViewport: CGRect,
+        targetAlpha: CGFloat,
+        duration: TimeInterval,
+        immediate: Bool,
+        preZeroAlpha: Bool = false
+    ) {
+        if preZeroAlpha {
+            panel.alphaValue = 0.0
+        }
+        if panel.frame != targetViewport {
+            panel.setFrame(targetViewport, display: true)
+        }
+        if immediate {
+            panel.alphaValue = targetAlpha
+        } else if panel.alphaValue != targetAlpha {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                panel.animator().alphaValue = targetAlpha
             }
         }
     }

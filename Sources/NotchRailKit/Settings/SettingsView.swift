@@ -259,39 +259,36 @@ public struct SettingsView: View {
     // MARK: - Tab 3: 应用管理 (Apps)
     
     private var appsTab: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 10) {
             // 1. 顶部现代化搜索与统计栏
-            HStack(spacing: 12) {
-                HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
                     
                     TextField("搜索应用名称或 Bundle ID...", text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.95))
                     
                     if !searchText.isEmpty {
                         Button {
                             searchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.45))
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
-                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.8)
                 )
                 
                 // 状态统计徽章
@@ -300,7 +297,7 @@ public struct SettingsView: View {
                 HStack(spacing: 6) {
                     Text("共 \(allItems.count) 项")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(.secondary)
                     
                     if overflowCount > 0 {
                         Text("\(overflowCount) 溢出")
@@ -308,15 +305,17 @@ public struct SettingsView: View {
                             .foregroundColor(.orange)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.18))
+                            .background(Color.orange.opacity(0.12))
                             .clipShape(Capsule())
                     }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.8)
                 )
             }
             
@@ -327,67 +326,68 @@ public struct SettingsView: View {
                         .frame(width: 12, height: 12)
                     Text("正在同步菜单栏快照与高清图标...")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.70))
+                        .foregroundColor(.secondary)
                     Spacer()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.black.opacity(0.40))
-                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.8)
                 )
             }
             
             // 2. 应用列表卡片流
             let items = filteredItems()
             if items.isEmpty {
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "menubar.dock.rectangle")
-                        .font(.system(size: 32, weight: .light))
-                        .foregroundColor(.white.opacity(0.25))
+                        .font(.system(size: 28, weight: .light))
+                        .foregroundColor(.secondary.opacity(0.6))
                     Text(searchText.isEmpty ? "当前屏幕暂无活动状态栏应用" : "未找到匹配 \"\(searchText)\" 的应用")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.50))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.25))
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.8)
                 )
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(items) { entry in
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, entry in
                             appRow(for: entry)
+                            if index < items.count - 1 {
+                                Divider()
+                                    .padding(.leading, 42)
+                            }
                         }
                     }
-                    .padding(6)
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.25))
-                )
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.8)
                 )
             }
             
             // 3. 底部简洁提示与手动刷新
             HStack {
-                HStack(spacing: 5) {
-                    Image(systemName: "sparkles")
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle")
                         .font(.system(size: 11))
-                        .foregroundColor(.orange.opacity(0.8))
-                    Text("NotchRail 自动识别被刘海遮挡或挤出屏幕的菜单栏图标并实时镜像到灵动岛")
+                        .foregroundColor(.secondary)
+                    Text("自动识别被刘海遮挡或挤出屏幕的菜单栏图标并实时镜像到灵动岛")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -395,24 +395,12 @@ public struct SettingsView: View {
                 Button {
                     syncCoordinator.scheduleSync(immediate: true, showProgress: true)
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("立即重扫")
-                            .font(.system(size: 11, weight: .medium))
-                    }
+                    Label("立即重扫", systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                )
-                .foregroundColor(.white.opacity(0.85))
+                .controlSize(.small)
             }
         }
-        .padding(.top, 4)
+        .padding(.top, 2)
     }
     
     private struct AppListEntry: Identifiable {
@@ -452,7 +440,7 @@ public struct SettingsView: View {
     private func filteredItems() -> [AppListEntry] {
         let prefs = preferenceStore.preferences
         let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
-        let currentSnapshot = syncCoordinator.snapshot(for: geom.displayID) ?? syncCoordinator.latestSnapshot
+        let currentSnapshot = syncCoordinator.effectiveSnapshot(for: geom.displayID)
         let menuBarItems = currentSnapshot?.allItems ?? []
         var result: [AppListEntry] = []
         
@@ -508,19 +496,19 @@ public struct SettingsView: View {
         let containerWidth: CGFloat = {
             if let img = entry.statusIcon, img.size.height > 0 {
                 let ratio = img.size.width / img.size.height
-                return max(28.0, min(80.0, iconHeight * ratio + 10))
+                return max(28.0, min(76.0, iconHeight * ratio + 10))
             }
             return 28.0
         }()
         
         HStack(spacing: 12) {
-            // 图标容器：深色高对比度衬底，自适应长方形/正方形图标宽度，清晰呈现真实单栏图标
+            // 图标容器：深色高对比度衬底（炭黑 + 细微亮边），专为白色/浅色菜单栏图标设计，在浅色与深色系统下均能清晰凸显
             ZStack {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.black.opacity(0.55))
+                    .fill(Color(red: 0.12, green: 0.12, blue: 0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
                     )
                 
                 if let statusImg = entry.statusIcon {
@@ -532,19 +520,19 @@ public struct SettingsView: View {
                         .frame(height: iconHeight)
                 } else {
                     Image(systemName: "menubar.rectangle")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.4))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.45))
                 }
             }
             .frame(width: containerWidth, height: 26)
             
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(entry.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.92))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
                 Text(entry.bundleID)
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.secondary)
             }
             
             Spacer()
@@ -559,43 +547,31 @@ public struct SettingsView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.orange)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(Color.orange.opacity(0.14))
+                .background(Color.orange.opacity(0.12))
+                .clipShape(Capsule())
                 .overlay(
                     Capsule()
-                        .strokeBorder(Color.orange.opacity(0.30), lineWidth: 0.8)
+                        .strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.8)
                 )
-                .clipShape(Capsule())
             } else {
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(Color.green.opacity(0.9))
+                        .fill(Color.secondary.opacity(0.6))
                         .frame(width: 5, height: 5)
                     Text("原生可见")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.green.opacity(0.90))
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(Color.green.opacity(0.12))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.green.opacity(0.25), lineWidth: 0.8)
-                )
+                .background(Color(nsColor: .separatorColor).opacity(0.12))
                 .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.white.opacity(entry.isOverflowed ? 0.10 : 0.05), lineWidth: 1)
-        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
     
     // MARK: - Tab 4: 关于与诊断 (About & Health)

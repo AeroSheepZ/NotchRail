@@ -34,10 +34,14 @@ public final class MouseMonitor: ObservableObject {
             }
         }
         
-        // 2. 局部鼠标点击与释放监听（用户在自身灵动岛或窗口内点击）
-        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: clickMask) { [weak self] event in
+        // 2. 局部鼠标点击与移动监听（用户在自身灵动岛或窗口内点击/移动）
+        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .mouseMoved]) { [weak self] event in
             Task { @MainActor in
-                self?.handleClick(at: NSEvent.mouseLocation)
+                if event.type == .mouseMoved {
+                    self?.handleMouseMove(at: NSEvent.mouseLocation)
+                } else {
+                    self?.handleClick(at: NSEvent.mouseLocation)
+                }
             }
             return event
         }
@@ -72,16 +76,16 @@ public final class MouseMonitor: ObservableObject {
         fullScreenGraceTimer?.invalidate()
         fullScreenGraceTimer = nil
         
-        if let gm = globalMouseDownMonitor {
-            NSEvent.removeMonitor(gm)
+        if let globalClick = globalMouseDownMonitor {
+            NSEvent.removeMonitor(globalClick)
             globalMouseDownMonitor = nil
         }
-        if let lm = localMouseDownMonitor {
-            NSEvent.removeMonitor(lm)
+        if let localClick = localMouseDownMonitor {
+            NSEvent.removeMonitor(localClick)
             localMouseDownMonitor = nil
         }
-        if let mm = globalMouseMovedMonitor {
-            NSEvent.removeMonitor(mm)
+        if let globalMoved = globalMouseMovedMonitor {
+            NSEvent.removeMonitor(globalMoved)
             globalMouseMovedMonitor = nil
         }
         cancellables.removeAll()
@@ -92,47 +96,52 @@ public final class MouseMonitor: ObservableObject {
         let prefs = PreferenceStore.shared.preferences
         let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         
+        // 仅当鼠标位于当前灵动岛所在的屏幕物理区域时进行判定，绝不随鼠标移动乱切屏
+        guard NSMouseInRect(location, geom.screenFrame, false) else { return }
+        
         // 1. 全屏沉浸协同：检测当前屏幕是否处于全屏空间
         if geom.isFullScreenSpace {
-            let isTouchingTopEdge = geom.isPointInTopEdgeHotZone(location, threshold: 2.0)
+            let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
+            let overflowCount = targetSnapshot?.overflowCount ?? 0
+            
+            // 0 溢出防护：若用户启用了「无溢出时自动隐藏」且当前屏 0 溢出，全屏碰顶绝不误唤醒空胶囊 (Spec L37)
+            let shouldSuppressAwakening = prefs.hideWhenNoOverflow && overflowCount == 0
+            let isTouchingTopEdge = !shouldSuppressAwakening && geom.isPointInTopEdgeHotZone(location, threshold: 2.0)
             
             if isTouchingTopEdge {
                 fullScreenGraceTimer?.invalidate()
                 fullScreenGraceTimer = nil
                 if !isAwakenedInFullScreen {
                     isAwakenedInFullScreen = true
+                    IslandStateMachine.shared.awakenFromFullScreen()
                     IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                 }
             } else if isAwakenedInFullScreen {
-                let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
-                    ?? MenuBarSyncCoordinator.shared.latestSnapshot
-                let overflowCount = targetSnapshot?.overflowCount ?? 0
                 let isExpanded = IslandStateMachine.shared.currentState.isExpanded
                 let screenRect = geom.interactiveScreenRect(isExpanded: isExpanded, overflowCount: overflowCount)
                 
-                // 宽限判定：在灵动岛交互区或紧贴顶边缘 40pt 内
-                let topZone = CGRect(
-                    x: geom.screenFrame.minX,
-                    y: geom.screenFrame.maxY - 40.0,
-                    width: geom.screenFrame.width,
-                    height: 40.0
+                // 宽限判定：在灵动岛交互区（外扩 16pt）或紧贴灵动岛正上方顶边缘 10pt 内（Spec L23，收敛整屏宽避免破坏沉浸）
+                let islandTopZone = CGRect(
+                    x: screenRect.minX - 16.0,
+                    y: geom.screenFrame.maxY - 10.0,
+                    width: screenRect.width + 32.0,
+                    height: 10.0
                 )
-                let isWithinInteractiveZone = NSMouseInRect(location, screenRect.insetBy(dx: -6, dy: -6), false) ||
-                                              NSMouseInRect(location, topZone, false)
+                let isWithinInteractiveZone = NSMouseInRect(location, screenRect.insetBy(dx: -16, dy: -16), false) ||
+                                              NSMouseInRect(location, islandTopZone, false)
                 
                 if isWithinInteractiveZone {
                     fullScreenGraceTimer?.invalidate()
                     fullScreenGraceTimer = nil
                 } else if fullScreenGraceTimer == nil {
-                    // 鼠标移出顶部与灵动岛交互区，启动 300ms 宽限平滑淡退
-                    fullScreenGraceTimer = Timer.scheduledTimer(withTimeInterval: 0.30, repeats: false) { [weak self] _ in
+                    // 鼠标移出灵动岛交互区，读取用户偏好设置的时延启动宽限平滑淡退 (Spec L23)
+                    let delay = max(0.1, prefs.collapseDelayMs / 1000.0)
+                    fullScreenGraceTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
                         Task { @MainActor in
                             guard let self = self else { return }
                             self.isAwakenedInFullScreen = false
                             self.fullScreenGraceTimer = nil
-                            if IslandStateMachine.shared.currentState.isExpanded {
-                                IslandStateMachine.shared.triggerCollapse()
-                            }
+                            IslandStateMachine.shared.enterFullScreenHidden()
                             IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                         }
                     }
@@ -144,6 +153,9 @@ public final class MouseMonitor: ObservableObject {
                 isAwakenedInFullScreen = false
                 fullScreenGraceTimer?.invalidate()
                 fullScreenGraceTimer = nil
+                if IslandStateMachine.shared.currentState.isFullScreenHidden {
+                    IslandStateMachine.shared.triggerCollapse()
+                }
             }
         }
         
@@ -153,8 +165,7 @@ public final class MouseMonitor: ObservableObject {
             return
         }
         
-        let targetSnapshot = MenuBarSyncCoordinator.shared.snapshot(for: geom.displayID)
-            ?? MenuBarSyncCoordinator.shared.latestSnapshot
+        let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let hasNoOverflow = overflowCount == 0
         

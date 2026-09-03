@@ -15,7 +15,7 @@ public struct IslandRootView: View {
         let prefs = preferenceStore.preferences
         let geometry = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         
-        let targetSnapshot = syncCoordinator.snapshot(for: geometry.displayID)
+        let targetSnapshot = syncCoordinator.effectiveSnapshot(for: geometry.displayID)
         let isSyncing = syncCoordinator.isPrewarming || (targetSnapshot == nil)
         let overflowItems = targetSnapshot?.overflowItems ?? []
         let isExpanded = stateMachine.currentState.isExpanded

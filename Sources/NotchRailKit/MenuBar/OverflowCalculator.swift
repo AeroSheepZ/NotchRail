@@ -29,13 +29,12 @@ public enum OverflowCalculator {
             
             let frame = item.nativeFrame
             
-            // 2. 综合溢出判定：
-            // - 底层 WindowServer 标记未在屏幕上显示 (!item.isOnScreen)
+            // 2. 纯几何物理溢出判定：
             // - 左边界侵入刘海右边缘圆角过渡区 (frame.minX < notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN)
             // - 超出屏幕右边界 (frame.maxX > screenMaxX + SCREEN_EDGE_TOLERANCE)
             // - 超出屏幕左边界 (frame.maxX < screenMinX)
-            let isOverflown = !item.isOnScreen ||
-                              frame.minX < (notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN) ||
+            // 严禁依赖 !item.isOnScreen：全屏或 Space 切换折叠菜单栏时 WindowServer 会将所有菜单项标记为未上屏，依赖该状态会导致整个菜单栏被误判为全部溢出！
+            let isOverflown = frame.minX < (notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN) ||
                               frame.maxX > (screenMaxX + SCREEN_EDGE_TOLERANCE) ||
                               frame.maxX < screenMinX
             

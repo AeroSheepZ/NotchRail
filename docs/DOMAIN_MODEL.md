@@ -188,6 +188,19 @@ public struct UserPreferences: Codable, Equatable, Sendable {
 }
 ```
 
+### 2.5 全屏空间状态检测器 (`FullScreenDetector`)
+负责三层融合检测多屏异构全屏状态，事件驱动更新内存原子缓存池。
+
+```swift
+public final class FullScreenDetector {
+    /// 缓存各显示器全屏状态 [CGDirectDisplayID: Bool]
+    public private(set) var fullScreenStates: [CGDirectDisplayID: Bool]
+    
+    /// 刷新各显示器全屏状态（前台 App AX 属性 + WindowServer Layer-0 覆盖率）
+    public func updateFullScreenStates() -> [CGDirectDisplayID: Bool]
+}
+```
+
 ---
 
 ## 3. 溢出计算与多屏几何规范 (`OverflowCalculator`)
@@ -235,7 +248,8 @@ stateDiagram-v2
 | `MenuBarSnapshotUpdated` | 后台窗口扫描与几何计算完成 | `snapshot: MenuBarSnapshot` | `IslandRootView`, `StatusItemManager`, `SettingsView` |
 | `IconStatesUpdated` | 动态像素比对发现网速/时钟/三方数值变化 | `iconStates: [String: IconState]` | `IslandIconCell`, `SettingsView` |
 | `ActiveDisplayChanged` | 鼠标跨屏移动至新显示器 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager`, `MouseMonitor` |
-| `NotchGeometryChanged` | 显示器插拔或分辨率变化 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager` |
+| `NotchGeometryChanged` | 显示器插拔、分辨率变化或全屏空间切换 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager` |
+| `FullScreenStateChanged` | 前台应用切换全屏或 Space 切换 | `isFullScreen: Bool` | `IslandWindowCoordinator`, `MouseMonitor` |
 | `PreferencesChanged` | 用户设置（打开方式、外接屏模式、延迟、黑名单等）变动 | `preferences: UserPreferences` | `IslandStateMachine`, `IslandWindowCoordinator`, `StatusItemManager` |
 | `PermissionStatusChanged` | 辅助功能或屏幕录制权限授予状态变化 | `isGranted: Bool` | `PermissionWindowCoordinator`, `SettingsView` |
 

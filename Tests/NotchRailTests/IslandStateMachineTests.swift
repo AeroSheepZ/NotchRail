@@ -78,4 +78,32 @@ final class IslandStateMachineTests: XCTestCase {
         // 恢复默认
         PreferenceStore.shared.update { $0.triggerMode = .hover }
     }
+    
+    func testFullScreenHiddenTransitions() {
+        let sm = IslandStateMachine()
+        XCTAssertEqual(sm.currentState, .compact)
+        
+        // 1. 进入全屏空间隐退态
+        sm.enterFullScreenHidden()
+        XCTAssertEqual(sm.currentState, .fullScreenHidden)
+        XCTAssertTrue(sm.currentState.isFullScreenHidden)
+        XCTAssertFalse(sm.currentState.isExpanded)
+        
+        // 2. 顶边缘碰顶唤醒至紧凑态
+        sm.awakenFromFullScreen()
+        XCTAssertEqual(sm.currentState, .compact)
+        XCTAssertFalse(sm.currentState.isFullScreenHidden)
+        
+        // 3. 再次隐退
+        sm.enterFullScreenHidden()
+        XCTAssertEqual(sm.currentState, .fullScreenHidden)
+        
+        // 4. 鼠标直接移入灵动岛热区：优先唤醒并进入 hoverPending
+        sm.handleMouseEnter(overflowCount: 2)
+        XCTAssertEqual(sm.currentState, .hoverPending)
+        
+        // 5. 快速离开恢复 compact
+        sm.handleMouseLeave()
+        XCTAssertEqual(sm.currentState, .compact)
+    }
 }

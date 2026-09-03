@@ -56,7 +56,14 @@ public final class ScreenManager: ObservableObject {
         // 监听活动 Space 切换（进入/退出全屏空间、桌面滑动）
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
             .sink { [weak self] _ in
-                self?.handleScreenParametersChanged()
+                self?.handleSpaceOrActiveAppChanged()
+            }
+            .store(in: &cancellables)
+
+        // 监听前台应用切换（全屏应用与普通应用前后台切换）
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .sink { [weak self] _ in
+                self?.handleSpaceOrActiveAppChanged()
             }
             .store(in: &cancellables)
     }
@@ -124,6 +131,40 @@ public final class ScreenManager: ObservableObject {
         refreshAllScreens()
     }
     
+    private var spaceTransitionWorkItem: DispatchWorkItem?
+    
+    /// 响应活动 Space 或前台 App 切换：仅更新全屏判定与视口穿透，不广播物理几何变更
+    private func handleSpaceOrActiveAppChanged() {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        
+        self.allGeometries = screens.map { ScreenManager.calculateGeometry(for: $0) }
+        let active = self.activeScreen()
+        let updatedGeom = ScreenManager.calculateGeometry(for: active)
+        self.currentGeometry = updatedGeom
+        
+        spaceTransitionWorkItem?.cancel()
+        
+        if updatedGeom.isFullScreenSpace {
+            // 1. 进入全屏空间：第 0 帧立即隐退，绝不在放大过程中的全屏窗口上漂浮残留
+            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+        } else {
+            // 2. 退出全屏至普通桌面：等待 250ms macOS Space 平移动画平稳落定，再优雅淡入
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                let finalScreens = NSScreen.screens
+                if !finalScreens.isEmpty {
+                    self.allGeometries = finalScreens.map { ScreenManager.calculateGeometry(for: $0) }
+                    let currentActive = self.activeScreen()
+                    self.currentGeometry = ScreenManager.calculateGeometry(for: currentActive)
+                }
+                IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+            }
+            self.spaceTransitionWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        }
+    }
+    
     /// 静态核心算法：计算单一屏幕的 NotchGeometry
     public static func calculateGeometry(for screen: NSScreen) -> NotchGeometry {
         let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
@@ -181,6 +222,7 @@ public final class ScreenManager: ObservableObject {
         )
         
         let isBuiltIn = CGDisplayIsBuiltin(displayID) != 0
+        let isFullScreen = FullScreenDetector.isFullScreen(on: screen)
         
         return NotchGeometry(
             displayID: displayID,
@@ -194,7 +236,8 @@ public final class ScreenManager: ObservableObject {
             physicalNotchRect: notchRect,
             compactBounds: compactBounds,
             extendedBounds: extendedBounds,
-            statusBarHeight: statusBarHeight
+            statusBarHeight: statusBarHeight,
+            isFullScreenSpace: isFullScreen
         )
     }
 }

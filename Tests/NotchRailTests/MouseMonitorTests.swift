@@ -23,23 +23,27 @@ final class MouseMonitorTests: XCTestCase {
             statusBarHeight: 34
         )
         
-        // 1. 顶边缘 2pt 内判定（Y >= 1115）
-        let touchTop = CGPoint(x: 800, y: 1116)
-        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTop, threshold: 2.0))
+        // 1. 顶边缘 2pt 默认阈值判定（Y >= 1115）
+        let touchTop = CGPoint(x: 300, y: 1116)
+        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTop))
         
-        let touchTopExact = CGPoint(x: 800, y: 1115)
-        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTopExact, threshold: 2.0))
+        let touchTop1pt = CGPoint(x: 300, y: 1115.5)
+        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTop1pt))
         
-        // 2. 距离顶部大于 2pt 判定（Y < 1115）
-        let belowTop = CGPoint(x: 800, y: 1114)
-        XCTAssertFalse(geom.isPointInTopEdgeHotZone(belowTop, threshold: 2.0))
+        // 2. 距离顶部大于 2pt 判定（Y = 1114 < 1115）
+        let below2pt = CGPoint(x: 300, y: 1114)
+        XCTAssertFalse(geom.isPointInTopEdgeHotZone(below2pt))
         
-        // 3. 超出水平边界判定
+        // 3. 严格防误触：距离顶部大于 2pt（例如 Y=1100 < 1115）即使在刘海中下部水平区间亦不误唤醒
+        let belowTopThreshold = CGPoint(x: 800, y: 1100)
+        XCTAssertFalse(geom.isPointInTopEdgeHotZone(belowTopThreshold))
+        
+        // 4. 超出水平边界判定
         let outOfLeft = CGPoint(x: -5, y: 1116)
-        XCTAssertFalse(geom.isPointInTopEdgeHotZone(outOfLeft, threshold: 2.0))
+        XCTAssertFalse(geom.isPointInTopEdgeHotZone(outOfLeft))
         
         let outOfRight = CGPoint(x: 1730, y: 1116)
-        XCTAssertFalse(geom.isPointInTopEdgeHotZone(outOfRight, threshold: 2.0))
+        XCTAssertFalse(geom.isPointInTopEdgeHotZone(outOfRight))
     }
     
     func testMultiDisplayOffsetTopEdgeHotZone() {
@@ -61,9 +65,9 @@ final class MouseMonitorTests: XCTestCase {
         
         // 副屏顶边缘判定（Y >= 1438, X in 2560...5120）
         let touchSecondaryTop = CGPoint(x: 3000, y: 1439)
-        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchSecondaryTop, threshold: 2.0))
+        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchSecondaryTop))
         
         let touchPrimaryCoordsOnSecondary = CGPoint(x: 500, y: 1439)
-        XCTAssertFalse(geom.isPointInTopEdgeHotZone(touchPrimaryCoordsOnSecondary, threshold: 2.0))
+        XCTAssertFalse(geom.isPointInTopEdgeHotZone(touchPrimaryCoordsOnSecondary))
     }
 }

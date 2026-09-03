@@ -60,7 +60,7 @@ final class ScreenManagerTests: XCTestCase {
     }
     
     func testFullScreenSpaceGeometricDetection() {
-        // 1. 标准桌面空间（visibleFrame.maxY 留有菜单栏高度 24pt）
+        // 1. 标准桌面空间
         let desktopGeometry = NotchGeometry(
             displayID: 1,
             displayName: "Desktop",
@@ -68,15 +68,16 @@ final class ScreenManagerTests: XCTestCase {
             hasPhysicalNotch: true,
             scaleFactor: 2.0,
             screenFrame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
-            visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1083), // 1117 - 34
+            visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1083),
             physicalNotchRect: CGRect(x: 774, y: 1083, width: 180, height: 34),
             compactBounds: CGRect(x: 774, y: 1083, width: 180, height: 34),
             extendedBounds: CGRect(x: 464, y: 1033, width: 800, height: 84),
-            statusBarHeight: 34
+            statusBarHeight: 34,
+            isFullScreenSpace: false
         )
         XCTAssertFalse(desktopGeometry.isFullScreenSpace)
         
-        // 2. 全屏空间（visibleFrame.maxY 与 screenFrame.maxY 贴齐）
+        // 2. 全屏空间
         let fullScreenGeometry = NotchGeometry(
             displayID: 1,
             displayName: "FullScreen Space",
@@ -84,11 +85,12 @@ final class ScreenManagerTests: XCTestCase {
             hasPhysicalNotch: true,
             scaleFactor: 2.0,
             screenFrame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
-            visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1117), // 撑满整个屏幕
+            visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
             physicalNotchRect: CGRect(x: 774, y: 1083, width: 180, height: 34),
             compactBounds: CGRect(x: 774, y: 1083, width: 180, height: 34),
             extendedBounds: CGRect(x: 464, y: 1033, width: 800, height: 84),
-            statusBarHeight: 34
+            statusBarHeight: 34,
+            isFullScreenSpace: true
         )
         XCTAssertTrue(fullScreenGeometry.isFullScreenSpace)
     }
@@ -106,7 +108,8 @@ final class ScreenManagerTests: XCTestCase {
             physicalNotchRect: CGRect(x: 774, y: 1083, width: 180, height: 34),
             compactBounds: CGRect(x: 774, y: 1083, width: 180, height: 34),
             extendedBounds: CGRect(x: 464, y: 1033, width: 800, height: 84),
-            statusBarHeight: 34
+            statusBarHeight: 34,
+            isFullScreenSpace: true
         )
         
         // 副屏普通桌面：保留 24pt 菜单栏高度
@@ -121,7 +124,8 @@ final class ScreenManagerTests: XCTestCase {
             physicalNotchRect: CGRect(x: 1728 + 1840, y: 2126, width: 160, height: 34),
             compactBounds: CGRect(x: 1728 + 1840, y: 2126, width: 160, height: 34),
             extendedBounds: CGRect(x: 1728 + 1560, y: 2076, width: 720, height: 84),
-            statusBarHeight: 24
+            statusBarHeight: 24,
+            isFullScreenSpace: false
         )
         
         XCTAssertTrue(primaryFullScreen.isFullScreenSpace)

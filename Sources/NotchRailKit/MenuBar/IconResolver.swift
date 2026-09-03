@@ -190,6 +190,10 @@ public final class IconResolver: ObservableObject {
                 failedCaptures.removeValue(forKey: key)
             } else if result.failedKeys.contains(key) {
                 recordFailure(for: key)
+                if iconStates[key] == nil || iconStates[key] == .pending {
+                    iconStates[key] = .failed
+                    statesChanged = true
+                }
             }
             // 既无图像也无失败（被黑名单跳过 / 无窗口 bounds）→ 保持原状态
         }
@@ -362,7 +366,7 @@ public struct ResolvedIcon: Sendable {
 // MARK: - CGImage 辅助扩展（跨格式像素分析与自动裁剪）
 
 extension CGImage {
-    private static let sRGBColorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+    private static let SRGB_COLOR_SPACE: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
     /// 生成不共享父图像素内存的独立拷贝
     nonisolated func detachedCopy() -> CGImage? {
@@ -374,7 +378,7 @@ extension CGImage {
                 height: height,
                 bitsPerComponent: 8,
                 bytesPerRow: 0,
-                space: colorSpace ?? Self.sRGBColorSpace,
+                space: colorSpace ?? Self.SRGB_COLOR_SPACE,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
         else { return nil }
@@ -394,7 +398,7 @@ extension CGImage {
                 height: height,
                 bitsPerComponent: 8,
                 bytesPerRow: bytesPerRow,
-                space: Self.sRGBColorSpace,
+                space: Self.SRGB_COLOR_SPACE,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
         else { return false }
@@ -431,7 +435,7 @@ extension CGImage {
                 height: height,
                 bitsPerComponent: 8,
                 bytesPerRow: bytesPerRow,
-                space: Self.sRGBColorSpace,
+                space: Self.SRGB_COLOR_SPACE,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
         else { return nil }

@@ -33,6 +33,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         return snapshotsByDisplay[displayID]
     }
     
+    /// 获取指定屏幕的有效快照（自动兜底回退全局最新快照，消除调用方重复三元判断）
+    public func effectiveSnapshot(for displayID: CGDirectDisplayID) -> MenuBarSnapshot? {
+        return snapshotsByDisplay[displayID] ?? latestSnapshot
+    }
+    
     /// 启动工作区监听与自动同步
     public func start() {
         stop()
