@@ -16,7 +16,7 @@ NotchRail 0.0.5 delivers **Full-Screen Immersive Space Coordination & Edge Awake
 1. **Zero-Overhead Geometric Full-Screen Detection**:
    - Compares visible screen frame height against total display frame height (`screen.visibleFrame.height == screen.frame.height`) to instantaneously detect when the active workspace has hidden the native menu bar, with zero thread polling overhead.
 2. **Top-Edge Hot-Zone Awakening (Edge Trigger)**:
-   - When the cursor reaches the top boundary ($Y \le 3\text{pt}$ from screen top) within a full-screen space, NotchRail smoothly fades in the standard Compact Island (including dynamic ear wings and overflow badge) in harmony with the descending macOS menu bar (preventing missed triggers on high-refresh-rate displays).
+   - When the cursor reaches the top boundary ($Y \le 2\text{pt}$ from screen top) within a full-screen space, NotchRail smoothly fades in the standard Compact Island (including dynamic ear wings and overflow badge) in harmony with the descending macOS menu bar.
 3. **Standard Compact Awakening State**:
    - Preserves standard desktop mental models: the awakened island appears as the familiar Compact Island, allowing users to hover (with debounce) or click to expand into the Extended Menu Bar.
 4. **Graceful Auto-Fadeout**:
@@ -74,11 +74,11 @@ NotchRail 0.0.5 delivers **Full-Screen Immersive Space Coordination & Edge Awake
    - Verify `isFullScreenSpace` geometric calculation under varying `frame` and `visibleFrame` mock configurations.
    - Verify multi-display independence (Display A in full-screen while Display B is desktop).
 2. `IslandStateMachineTests`:
-   - Verify transition from `fullScreenHidden` to `compact` upon top-edge trigger ($Y \le 3\text{pt}$).
+   - Verify transition from `fullScreenHidden` to `compact` upon top-edge trigger ($Y \le 2\text{pt}$).
    - Verify transition back to `fullScreenHidden` upon mouse leave after grace timeout.
    - Verify hover expansion transitions while in awakened full-screen compact state.
 3. `MouseMonitorTests`:
-   - Verify edge threshold evaluations ($Y \le 3\text{pt}$) across display coordinate systems.
+   - Verify edge threshold evaluations ($Y \le 2\text{pt}$) across display coordinate systems.
 
 ### Prior Art
 - Builds upon existing `Tests/NotchRailTests/IslandStateMachineTests.swift` and `ScreenManagerTests.swift`.

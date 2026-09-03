@@ -33,7 +33,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         return snapshotsByDisplay[displayID]
     }
     
-    /// 获取指定屏幕的有效快照（优先读取目标屏预热快照，安全兜底全局最新快照以解开 isSyncing 交互死锁）
+    /// 获取指定屏幕的有效快照（自动兜底回退全局最新快照，消除调用方重复三元判断）
     public func effectiveSnapshot(for displayID: CGDirectDisplayID) -> MenuBarSnapshot? {
         return snapshotsByDisplay[displayID] ?? latestSnapshot
     }
@@ -88,6 +88,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             isPrewarming = true
         }
         pendingResync = false
+        let startTime = Date()
         
         let currentGeom = ScreenManager.shared.currentGeometry
         let allGeometries = ScreenManager.shared.allGeometries
@@ -112,6 +113,13 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                     await IconResolver.shared.resolveIcons(for: otherSnap.allItems)
                 }
                 otherSnapshots[otherGeom.displayID] = otherSnap
+            }
+            
+            // 若开启了加载进度动画，保证至少维持 500ms 完整旋转周期，避免右耳翼闪退抽搐
+            let elapsed = Date().timeIntervalSince(startTime)
+            if showProgress && elapsed < 0.50 {
+                let remainingNanos = UInt64((0.50 - elapsed) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: remainingNanos)
             }
             
             await MainActor.run {

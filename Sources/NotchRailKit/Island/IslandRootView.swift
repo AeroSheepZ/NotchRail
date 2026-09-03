@@ -84,22 +84,10 @@ public struct IslandRootView: View {
                                             )
                                         }
                                     }
-                                    .padding(.horizontal, 14)
+                                    .padding(.horizontal, 12)
                                     .padding(.vertical, 2)
                                 }
                                 .frame(height: 36)
-                                .mask(
-                                    LinearGradient(
-                                        stops: [
-                                            .init(color: .clear, location: 0.0),
-                                            .init(color: .black, location: 0.04),
-                                            .init(color: .black, location: 0.96),
-                                            .init(color: .clear, location: 1.0)
-                                        ],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
                             }
                         }
                         .transition(
@@ -130,7 +118,7 @@ public struct IslandRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
     
-    // MARK: - 交互响应
+    // MARK: - 交互触发分发 (Hover & Click 隔离及 HoverAndClick 复合支持)
     
     private func handleHover(_ isHovered: Bool, overflowCount: Int, isSyncing: Bool) {
         guard !isSyncing else { return }
@@ -162,11 +150,7 @@ public struct IslandRootView: View {
         let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem)
         switch clickResult {
         case .success:
-            // 全屏沉浸闭环：如果在全屏空间下点击菜单项，点击后无条件平滑隐退，归还全屏沉浸感 (Spec L33)
-            let currentGeom = ScreenManager.shared.effectiveGeometry(for: preferenceStore.preferences.externalDisplayMode)
-            if currentGeom.isFullScreenSpace {
-                MouseMonitor.shared.retreatFullScreenAwakening()
-            } else if preferenceStore.preferences.autoCollapseOnClick {
+            if preferenceStore.preferences.autoCollapseOnClick {
                 IslandStateMachine.shared.triggerCollapse()
             }
             return true

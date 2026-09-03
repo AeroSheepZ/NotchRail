@@ -55,29 +55,18 @@ public enum SpikeRunner {
         // 5. 图标解析实测（批量窗口截图）
         print("\n5️⃣ [图标解析实测 (IconResolver 批量窗口截图)]")
         let resolveStartTime = CFAbsoluteTimeGetCurrent()
-        await IconResolver.shared.resolveIcons(for: snapshot.allItems)
+        let resolvedIcons = await IconResolver.shared.resolveIconsSnapshot(for: snapshot.allItems)
         let resolveElapsedMs = (CFAbsoluteTimeGetCurrent() - resolveStartTime) * 1000.0
-        let loadedCount = snapshot.allItems.filter {
-            if case .loaded = IconResolver.shared.iconStates[$0.iconCacheKey] { return true }
-            return false
-        }.count
         print("   - 图标解析总耗时: \(String(format: "%.2f", resolveElapsedMs)) ms")
-        print("   - 成功解析图标数: \(loadedCount) / \(snapshot.allItems.count) 个")
+        print("   - 成功解析图标数: \(resolvedIcons.count) / \(snapshot.allItems.count) 个")
         
         if !snapshot.allItems.isEmpty {
             print("\n📋 [详细菜单项扫描与图标等级列表]:")
             for (index, item) in snapshot.allItems.enumerated() {
                 let statusTag = item.displayMode == .overflowed ? "🔴 [溢出/岛内展示]" : "🟢 [原生可见]"
                 let titleStr = item.title ?? item.bundleIdentifier ?? "Unknown"
-                let state = IconResolver.shared.iconStates[item.iconCacheKey]
-                let stateTag: String = {
-                    switch state {
-                    case .loaded: return "loaded"
-                    case .failed: return "failed"
-                    default: return "pending"
-                    }
-                }()
-                print("   \(index + 1). \(statusTag) \(titleStr) [State: \(stateTag)] - Frame: (\(Int(item.nativeFrame.minX)), \(Int(item.nativeFrame.minY)), \(Int(item.nativeFrame.width))x\(Int(item.nativeFrame.height)))")
+                let sourceTag = resolvedIcons[item.id]?.sourceType.rawValue ?? "none"
+                print("   \(index + 1). \(statusTag) \(titleStr) [Source: \(sourceTag)] - Frame: (\(Int(item.nativeFrame.minX)), \(Int(item.nativeFrame.minY)), \(Int(item.nativeFrame.width))x\(Int(item.nativeFrame.height)))")
             }
         } else {
             print("   ℹ️ 提示: 未扫描到菜单栏项（若未授权 Accessibility 权限，AX 树将返回空，请授权后重试）")
@@ -211,7 +200,7 @@ public enum SpikeRunner {
         check(extGeometry.physicalNotchRect.origin.x == 1840, "Test 4: Virtual notch center calculation")
         print("   ✅ Case 4 通过: 外接 4K 显示器虚拟居中锚点计算准确")
         
-        // 测试 5: 灵动岛状态机流转与防抖
+        // Test 5: IslandStateMachine Transitions
         let sm = IslandStateMachine()
         check(sm.currentState == .compact, "Test 5: Initial state should be compact")
         sm.handleMouseEnter()
@@ -228,7 +217,7 @@ public enum SpikeRunner {
         check(sm.currentState == .compact, "Test 5: triggerCollapse should restore compact")
         print("   ✅ Case 5 通过: IslandStateMachine 防抖、展开与收起宽限期状态流转验证无误")
         
-        // 测试 6: 临界刘海边缘物理精度判定
+        // Test 6: Critical Notch Boundary Precision
         let exactBorderItem = MenuBarItem(
             processIdentifier: 601,
             bundleIdentifier: "com.border.exact",
@@ -246,7 +235,7 @@ public enum SpikeRunner {
         check(borderSnapshot.overflowItems.count == 1 && borderSnapshot.overflowItems.first?.title == "BorderInside", "Test 6: 0.5pt into notch should overflow")
         print("   ✅ Case 6 通过: 临界刘海边缘坐标 0.5pt 级高精度溢出判定")
         
-        // 测试 7: 多显示器偏移坐标系几何溢出计算
+        // Test 7: Multi-display Offset Screen
         let offsetScreenFrame = CGRect(x: 2560, y: 0, width: 2560, height: 1440)
         let offsetNotchRect = CGRect(x: 2560 + (2560 - 160) / 2, y: 1440 - 34, width: 160, height: 34)
         let offsetGeometry = NotchGeometry(
@@ -280,7 +269,7 @@ public enum SpikeRunner {
         check(offsetSnapshot.overflowItems.count == 1 && offsetSnapshot.overflowItems.first?.title == "OffsetOverflow", "Test 7: Offset screen overflow mismatch")
         print("   ✅ Case 7 通过: 副显示器偏移坐标系 (X=2560) 几何溢出计算无误")
         
-        // 测试 8: 高密度大量菜单栏应用溢出压力模拟
+        // Test 8: Large Overcrowded MenuBar Simulation
         var simulatedItems: [MenuBarItem] = []
         var curX: CGFloat = 1500
         for i in 1...25 {
@@ -298,7 +287,7 @@ public enum SpikeRunner {
         check(crowdedSnapshot.visibleItems.count + crowdedSnapshot.overflowItems.count == 25, "Test 8: Total count preserved")
         print("   ✅ Case 8 通过: 25 个高密度状态栏应用大量溢出压力模拟测试通过")
         
-        // 测试 10: IconResolver 截图不可用时返回空结果（无兜底降级）
+        // Test 10: IconResolver 截图不可用时返回空结果（无兜底降级）
         let fallbackItem = MenuBarItem(
             windowID: 0,
             processIdentifier: 999999,
@@ -306,18 +295,11 @@ public enum SpikeRunner {
             title: "WiFi Tool",
             nativeFrame: CGRect(x: 0, y: 0, width: 0, height: 0)
         )
-        await IconResolver.shared.resolveIcons(for: [fallbackItem])
-        let state = IconResolver.shared.iconStates[fallbackItem.iconCacheKey]
-        let isLoaded: Bool
-        if case .loaded = state {
-            isLoaded = true
-        } else {
-            isLoaded = false
-        }
-        check(!isLoaded, "Test 10: Unavailable capture should resolve to failed/empty (no fallback)")
+        let resolved = await IconResolver.shared.resolveIconsSnapshot(for: [fallbackItem])
+        check(resolved.isEmpty, "Test 10: Unavailable capture should resolve to empty (no fallback)")
         print("   ✅ Case 10 通过: 截图不可用时返回 nil，无兜底降级")
         
-        // 测试 11: 用户偏好设置持久化与模型测试
+        // Test 11: PreferenceStore Persistence & Model Test
         let defaultsSuite = UserDefaults(suiteName: "com.notchrail.test")!
         defaultsSuite.removePersistentDomain(forName: "com.notchrail.test")
         let testStore = PreferenceStore(userDefaults: defaultsSuite)

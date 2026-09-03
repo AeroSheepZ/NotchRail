@@ -23,21 +23,18 @@ final class MouseMonitorTests: XCTestCase {
             statusBarHeight: 34
         )
         
-        // 1. 顶边缘 3.0pt 默认阈值判定（Y >= 1114）
+        // 1. 顶边缘 2pt 默认阈值判定（Y >= 1115）
         let touchTop = CGPoint(x: 300, y: 1116)
         XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTop))
         
         let touchTop1pt = CGPoint(x: 300, y: 1115.5)
         XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTop1pt))
         
-        let touchTop3pt = CGPoint(x: 300, y: 1114)
-        XCTAssertTrue(geom.isPointInTopEdgeHotZone(touchTop3pt))
+        // 2. 距离顶部大于 2pt 判定（Y = 1114 < 1115）
+        let below2pt = CGPoint(x: 300, y: 1114)
+        XCTAssertFalse(geom.isPointInTopEdgeHotZone(below2pt))
         
-        // 2. 距离顶部大于 3.0pt 判定（Y = 1113 < 1114）
-        let below3pt = CGPoint(x: 300, y: 1113)
-        XCTAssertFalse(geom.isPointInTopEdgeHotZone(below3pt))
-        
-        // 3. 严格防误触：距离顶部大于 3.0pt（例如 Y=1100 < 1114）即使在刘海中下部水平区间亦不误唤醒
+        // 3. 严格防误触：距离顶部大于 2pt（例如 Y=1100 < 1115）即使在刘海中下部水平区间亦不误唤醒
         let belowTopThreshold = CGPoint(x: 800, y: 1100)
         XCTAssertFalse(geom.isPointInTopEdgeHotZone(belowTopThreshold))
         
