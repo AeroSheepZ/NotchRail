@@ -91,6 +91,15 @@ public final class MouseMonitor: ObservableObject {
         cancellables.removeAll()
     }
     
+    /// 退出全屏唤醒状态，使灵动岛平滑隐退恢复全屏沉浸
+    public func retreatFullScreenAwakening() {
+        fullScreenGraceTimer?.invalidate()
+        fullScreenGraceTimer = nil
+        isAwakenedInFullScreen = false
+        IslandStateMachine.shared.enterFullScreenHidden()
+        IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+    }
+    
     /// 处理鼠标移动：全屏顶边缘唤醒 + 硬件级穿透判定
     private func handleMouseMove(at location: CGPoint) {
         let prefs = PreferenceStore.shared.preferences
@@ -106,7 +115,7 @@ public final class MouseMonitor: ObservableObject {
             
             // 0 溢出防护：若用户启用了「无溢出时自动隐藏」且当前屏 0 溢出，全屏碰顶绝不误唤醒空胶囊 (Spec L37)
             let shouldSuppressAwakening = prefs.hideWhenNoOverflow && overflowCount == 0
-            let isTouchingTopEdge = !shouldSuppressAwakening && geom.isPointInTopEdgeHotZone(location, threshold: 2.0)
+            let isTouchingTopEdge = !shouldSuppressAwakening && geom.isPointInTopEdgeHotZone(location, threshold: 3.0)
             
             if isTouchingTopEdge {
                 fullScreenGraceTimer?.invalidate()
@@ -159,6 +168,7 @@ public final class MouseMonitor: ObservableObject {
             }
         }
         
+        // 2. 硬件级透明视口动态穿透判定（仅胶囊自身认领事件，胶囊外 100% 物理直通底层 Chrome/Safari）
         let isExpanded = IslandStateMachine.shared.currentState.isExpanded
         if isExpanded {
             IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)

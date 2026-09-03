@@ -36,13 +36,8 @@ public final class ScreenManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
-        let fallbackScreen = NSScreen.main ?? NSScreen.screens.first
-        let initialGeom: NotchGeometry
-        if let screen = fallbackScreen {
-            initialGeom = ScreenManager.calculateGeometry(for: screen)
-        } else {
-            initialGeom = ScreenManager.calculateGeometry(for: NSScreen())
-        }
+        let activeScreen = NSScreen.main ?? NSScreen.screens.first
+        let initialGeom = activeScreen.map { ScreenManager.calculateGeometry(for: $0) } ?? NotchGeometry.empty()
         self.currentGeometry = initialGeom
         self.refreshAllScreens()
         
@@ -78,21 +73,21 @@ public final class ScreenManager: ObservableObject {
         self.allGeometries = screens.map { ScreenManager.calculateGeometry(for: $0) }
         
         // 重新同步当前屏幕几何
-        let activeScreen = self.activeScreen()
-        let updatedGeom = ScreenManager.calculateGeometry(for: activeScreen)
-        
-        if updatedGeom != self.currentGeometry {
-            self.currentGeometry = updatedGeom
-            NotificationCenter.default.post(name: .notchGeometryChanged, object: updatedGeom)
+        if let activeScreen = self.activeScreen() {
+            let updatedGeom = ScreenManager.calculateGeometry(for: activeScreen)
+            if updatedGeom != self.currentGeometry {
+                self.currentGeometry = updatedGeom
+                NotificationCenter.default.post(name: .notchGeometryChanged, object: updatedGeom)
+            }
         }
     }
     
     /// 获取当前获得焦点或最后激活点击的活动屏幕
-    public func activeScreen() -> NSScreen {
+    public func activeScreen() -> NSScreen? {
         if let focused = currentFocusedScreen, NSScreen.screens.contains(focused) {
             return focused
         }
-        return NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
+        return NSScreen.main ?? NSScreen.screens.first
     }
     
     /// 由前台焦点变化或用户点击触发主动切换至目标屏幕
@@ -112,14 +107,16 @@ public final class ScreenManager: ObservableObject {
     /// 检查并切换屏幕（兼容接口）
     @discardableResult
     public func updateActiveDisplayIfNeeded() -> Bool {
-        let screen = activeScreen()
+        guard let screen = activeScreen() else { return false }
         return updateActiveFocusScreen(to: screen)
     }
     
     /// 解析特定屏幕的刘海几何数据
     public func resolveGeometry(for screen: NSScreen? = nil) -> NotchGeometry {
-        let targetScreen = screen ?? activeScreen()
-        return ScreenManager.calculateGeometry(for: targetScreen)
+        if let targetScreen = screen ?? activeScreen() {
+            return ScreenManager.calculateGeometry(for: targetScreen)
+        }
+        return NotchGeometry.empty()
     }
     
     /// 根据 displayID 查询几何数据
@@ -133,29 +130,27 @@ public final class ScreenManager: ObservableObject {
     
     private var spaceTransitionWorkItem: DispatchWorkItem?
     
-    /// 响应活动 Space 或前台 App 切换：仅更新全屏判定与视口穿透，不广播物理几何变更
+    /// 响应活动 Space 或前台 App 切换：仅更新全屏空间几何，由订阅者单向响应，消除反向强耦合
     private func handleSpaceOrActiveAppChanged() {
         let screens = NSScreen.screens
-        guard !screens.isEmpty else { return }
+        guard !screens.isEmpty, let active = self.activeScreen() else { return }
         
         self.allGeometries = screens.map { ScreenManager.calculateGeometry(for: $0) }
-        let active = self.activeScreen()
         let updatedGeom = ScreenManager.calculateGeometry(for: active)
-        self.currentGeometry = updatedGeom
         
         spaceTransitionWorkItem?.cancel()
         
         if updatedGeom.isFullScreenSpace {
-            // 1. 进入全屏空间：第 0 帧立即隐退，绝不在放大过程中的全屏窗口上漂浮残留
+            // 1. 进入全屏空间：第 0 帧立即隐退视口，绝不在全屏窗口上漂浮残留
+            self.currentGeometry = updatedGeom
             IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
         } else {
-            // 2. 退出全屏至普通桌面：等待 250ms macOS Space 平移动画平稳落定，再优雅淡入
+            // 2. 退出全屏至普通桌面：等待 250ms macOS Space 平移动画平稳落定，再平滑淡入恢复
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 let finalScreens = NSScreen.screens
-                if !finalScreens.isEmpty {
+                if !finalScreens.isEmpty, let currentActive = self.activeScreen() {
                     self.allGeometries = finalScreens.map { ScreenManager.calculateGeometry(for: $0) }
-                    let currentActive = self.activeScreen()
                     self.currentGeometry = ScreenManager.calculateGeometry(for: currentActive)
                 }
                 IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()

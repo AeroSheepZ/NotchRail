@@ -19,23 +19,20 @@ public enum IslandWingMetrics {
         
         guard overflowCount > 0 else { return 0.0 }
         
-        let outerLeadingMargin: CGFloat = 6.0
-        let capsuleInternalPadding: CGFloat = 12.0 // 左右各 6pt
-        let iconWidth: CGFloat = 13.0             // SF Symbol tray.full.fill 真实渲染宽度
-        let itemSpacing: CGFloat = 4.0
         let digitWidth = digitAreaWidth(for: overflowCount)
-        
-        let notchTransitionMargin: CGFloat = 10.0 // 与物理刘海左侧喇叭口间的安全过渡距离
-        
-        let pillTotalWidth = capsuleInternalPadding + iconWidth + itemSpacing + digitWidth
-        let totalWingWidth = outerLeadingMargin + pillTotalWidth + notchTransitionMargin
+        let pillTotalWidth = CAPSULE_INTERNAL_PADDING + ICON_WIDTH + ITEM_SPACING + digitWidth
+        let totalWingWidth = OUTER_LEADING_MARGIN + pillTotalWidth + NOTCH_TRANSITION_MARGIN
         return ceil(totalWingWidth)
     }
 
     /// 右侧耳翼宽度（严格为 0，右侧始终与刘海右缘平齐，底座永不偏离摄像头，绝不遮挡原生状态栏）
-    public static func rightWingWidth(isSyncing: Bool = false) -> CGFloat {
-        return 0.0
-    }
+    public static let RIGHT_WING_WIDTH: CGFloat = 0.0
+    
+    private static let OUTER_LEADING_MARGIN: CGFloat = 6.0
+    private static let CAPSULE_INTERNAL_PADDING: CGFloat = 12.0
+    private static let ICON_WIDTH: CGFloat = 13.0
+    private static let ITEM_SPACING: CGFloat = 4.0
+    private static let NOTCH_TRANSITION_MARGIN: CGFloat = 10.0
 }
 
 /// 表示屏幕与刘海几何测量数据
@@ -86,6 +83,25 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         self.isFullScreenSpace = isFullScreenSpace
     }
     
+    /// 提供初始空几何占位（杜绝硬编码设备尺寸注入伪数据）
+    public static func empty() -> NotchGeometry {
+        return NotchGeometry(
+            displayID: 0,
+            displayName: "No Display",
+            isBuiltIn: false,
+            hasPhysicalNotch: false,
+            scaleFactor: 1.0,
+            screenFrame: .zero,
+            visibleFrame: .zero,
+            safeAreaInsets: NSEdgeInsets(),
+            physicalNotchRect: .zero,
+            compactBounds: .zero,
+            extendedBounds: .zero,
+            statusBarHeight: 24,
+            isFullScreenSpace: false
+        )
+    }
+    
     public static func == (lhs: NotchGeometry, rhs: NotchGeometry) -> Bool {
         return lhs.displayID == rhs.displayID &&
                lhs.displayName == rhs.displayName &&
@@ -106,8 +122,8 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     }
 
     /// 检查指定坐标是否处于屏幕物理顶边缘触发热区
-    /// 严格遵守 Spec L19：光标推至屏幕物理顶边缘（<= 2pt）触发唤醒，杜绝全屏观影划过刘海中下部引起误唤醒
-    public func isPointInTopEdgeHotZone(_ point: CGPoint, threshold: CGFloat = 2.0) -> Bool {
+    /// 默认阈值 3.0pt，防止高刷新率下高速甩动光标跨帧漏碰
+    public func isPointInTopEdgeHotZone(_ point: CGPoint, threshold: CGFloat = 3.0) -> Bool {
         guard point.x >= screenFrame.minX && point.x <= screenFrame.maxX else { return false }
         return point.y >= screenFrame.maxY - threshold && point.y <= screenFrame.maxY + 5.0
     }

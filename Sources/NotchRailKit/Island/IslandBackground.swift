@@ -11,7 +11,7 @@ public struct IslandBackground: View {
     
     public var body: some View {
         ZStack {
-            // 1. 统一纯黑吸光底座（闭合填充）
+            // 1. 统一纯黑吸光底座（闭合填充，全屏幕维持苹果灵动岛标志性深邃纯黑）
             NotchShape(bottomCornerRadius: cornerRadius)
                 .fill(IslandTheme.ColorPalette.BACKGROUND)
             

@@ -152,25 +152,6 @@ public final class IconResolver: ObservableObject {
         apply(result, to: items)
     }
 
-    /// 兼容旧调用方的同步快照式 API
-    public func resolveIconsSnapshot(for items: [MenuBarItem]) async -> [UUID: ResolvedIcon] {
-        await resolveIcons(for: items)
-        var result: [UUID: ResolvedIcon] = [:]
-        for item in items {
-            switch iconStates[item.iconCacheKey] {
-            case .loaded(let image):
-                result[item.id] = ResolvedIcon(
-                    image: image,
-                    sourceType: .screenCapture,
-                    label: item.title ?? item.bundleIdentifier ?? "App"
-                )
-            default:
-                break
-            }
-        }
-        return result
-    }
-
     // MARK: - 应用捕获结果
 
     private func apply(_ result: CaptureResult, to items: [MenuBarItem]) {
@@ -340,27 +321,6 @@ public final class IconResolver: ObservableObject {
 
     /// 当前缓存规模（调试用）
     public var cacheSize: Int { cache.count }
-}
-
-// MARK: - 旧 API 兼容（Spike 调试路径）
-
-/// 描述图标最终解析结果（兼容旧调用方）
-public struct ResolvedIcon: Sendable {
-    public let image: NSImage
-    public let sourceType: SourceType
-    public let label: String
-
-    public enum SourceType: String, Sendable {
-        case screenCapture
-        case appBundle
-        case fallbackSymbol
-    }
-
-    public init(image: NSImage, sourceType: SourceType, label: String) {
-        self.image = image
-        self.sourceType = sourceType
-        self.label = label
-    }
 }
 
 // MARK: - CGImage 辅助扩展（跨格式像素分析与自动裁剪）

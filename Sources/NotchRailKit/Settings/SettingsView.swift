@@ -416,8 +416,7 @@ public struct SettingsView: View {
     /// 统一装配应用列表条目（严格只使用原生菜单栏真实截图）
     private func resolveAppEntry(item: MenuBarItem, index: Int) -> AppListEntry {
         let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
-        let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
-        let title = item.title ?? runningApp?.localizedName ?? bundleID
+        let title = item.title ?? bundleID
         
         // 从 IconResolver 获取当前窗口捕获的真实菜单栏状态图标
         let statusImage: NSImage? = {
