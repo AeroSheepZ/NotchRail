@@ -25,18 +25,25 @@ public final class IslandHostingView<Content: View>: NSHostingView<Content> {
     /// 计算当前在本地视图坐标系（以左下角为原点）内的有效灵动岛胶囊区域
     private var currentIslandBounds: NSRect {
         let prefs = PreferenceStore.shared.preferences
-        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
+        // 严格以当前物理 Panel 锚定的屏幕几何为单一真实来源 (Ticket #46 & #47)
+        let geom = IslandWindowCoordinator.shared.currentPanelGeometry
+        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        
+        // 1. 平直屏未展开常态下，矩形严格归零，hitTest 绝对返回 nil，底层窗口 100% 物理直通 (Ticket #47)
+        if !geom.hasPhysicalNotch && !isExpanded {
+            return .zero
+        }
         
         let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let hasNoOverflow = overflowCount == 0
-        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
         
-        // 0 溢出且开启自动隐藏（且非主动展开态）时，完全不响应任何鼠标
+        // 2. 0 溢出且开启自动隐藏（且非主动展开态）时，完全不响应任何鼠标
         if prefs.hideWhenNoOverflow && hasNoOverflow && !isExpanded {
             return .zero
         }
         
+        // 3. 展开态或物理刘海常驻态：计算精准活跃矩形（展开态为悬浮浮轨矩形）
         return geom.interactiveBounds(
             in: bounds,
             isExpanded: isExpanded,

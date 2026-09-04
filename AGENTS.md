@@ -79,7 +79,9 @@ NotchRail/
 - **物理穿透管理**：通过 `IslandWindowCoordinator` 联动 `MouseMonitor` 精确控制 `ignoresMouseEvents`。仅在灵动岛展开区域或紧凑胶囊实际像素有效区内认领鼠标事件，其余透明区域 100% 物理直通底层应用（确保底层 Chrome 标签栏、书签栏及操作毫无阻滞）。
 
 ### 2.4 纯物理几何判定 (Pure Physical Geometry)
-- 溢出项判定（`OverflowCalculator`）必须完全基于物理 X 坐标与刘海右侧过渡区安全余量（`notchRightEdge + 12pt`）；
+- 溢出项判定（`OverflowCalculator`）必须完全基于真实物理几何与碰撞判定：
+  - **内建物理刘海屏**：基于物理 X 坐标与刘海右侧过渡区安全余量（`notchRightEdge + 12pt`）；
+  - **平直外接显示器**：基于前台 App 菜单右边缘碰撞阈值（`appMenuRightEdge + 12pt`）；
 - **严禁依赖 `!item.isOnScreen`**：在 macOS 切换 Space 或全屏时，WindowServer 会将所有菜单项标记为未上屏，依赖该状态会导致菜单项被误判为全量溢出；
 - 仅当菜单项的水平跨度确实落在当前屏幕有效宽度内（`isWithinScreenSpan`）时参与计算，非本屏窗口绝不可标记为本屏溢出项。
 
@@ -91,10 +93,15 @@ NotchRail/
 macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的渲染与几何特性存在本质差异：
 - **内建刘海屏 (`hasPhysicalNotch == true`)**：
   - 状态栏高度以系统安全区（通常为 32pt 或 34pt）为准；
-  - 顶部保留 5pt 硬件级喇叭口耳翼（`topEarRadius = IslandTheme.CornerRadius.TOP_EAR`，默认 5.0pt）。
+  - 顶部保留 5pt 硬件级喇叭口耳翼（`topEarRadius = IslandTheme.CornerRadius.TOP_EAR`，默认 5.0pt）；
+  - 全局单例 `IslandPanel` 常态常驻守护于此，呈现紧凑态胶囊（Compact Island）。
 - **外接平直显示器 (`hasPhysicalNotch == false`)**：
-  - 状态栏高度必须通过 WindowServer 状态栏窗口（Layer 24）动态探测（通常为 30pt 或 31pt），严禁硬编码 34.0pt；
-  - 消除外展喇叭口：无硬件刘海时顶部耳翼半径必须置 0（`topEarRadius = 0.0`），呈现吸顶平直、底部圆润包边的高精胶囊。
+  - **彻底废除 160pt 虚拟假刘海**：平直外接屏 `physicalNotchRect == .zero`，消除假刘海与常驻黑胶囊的视觉污染；
+  - **动态菜单碰撞判定**：溢出判定完全基于前台 App 菜单右边缘碰撞（`appMenuRightEdge + 12pt`），仅当三方项被挤压时才判定为溢出；
+  - **常态 100% 隐形**：无溢出或未激活时面板完全隐退（`alpha = 0`，`ignoresMouseEvents = true`），底层窗口 100% 物理直通；
+  - **展开采用吸顶平直托轨 (Floating Shelf)**：展开时顶部耳翼半径必须置 0（`topEarRadius = 0.0`），呈现无假刘海的原生吸顶悬浮托轨；
+  - **视口借调流转架构 (Viewport Lease)**：全局单例 `IslandPanel` 常态守护在 MacBook 物理刘海屏，仅在外接屏检测到溢出且光标在顶部中央热区停留达阈值时原子借调展开，收起后无感归位回主刘海屏；
+  - **状态栏高度探测**：状态栏高度必须通过 WindowServer 状态栏窗口（Layer 24）动态探测（通常为 30pt 或 31pt），严禁硬编码 34.0pt。
 
 ### 3.2 全屏空间 (Full-Screen Spaces) 沉浸协同
 - **全屏判定标准**：

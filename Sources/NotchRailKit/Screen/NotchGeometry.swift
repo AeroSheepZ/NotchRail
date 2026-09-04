@@ -42,6 +42,9 @@ public enum IslandWingMetrics {
 public struct NotchGeometry: Equatable, Sendable, Identifiable {
     public var id: CGDirectDisplayID { displayID }
     
+    /// 系统默认应用菜单保留宽度基准（pt）
+    public static let DEFAULT_APP_MENU_WIDTH: CGFloat = 180.0
+    
     public let displayID: CGDirectDisplayID
     public let displayName: String
     public let isBuiltIn: Bool
@@ -55,6 +58,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     public let extendedBounds: CGRect
     public let statusBarHeight: CGFloat
     public let isFullScreenSpace: Bool
+    public let appMenuRightEdge: CGFloat?
     
     public init(
         displayID: CGDirectDisplayID,
@@ -69,7 +73,8 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         compactBounds: CGRect,
         extendedBounds: CGRect,
         statusBarHeight: CGFloat = 24.0,
-        isFullScreenSpace: Bool = false
+        isFullScreenSpace: Bool = false,
+        appMenuRightEdge: CGFloat? = nil
     ) {
         self.displayID = displayID
         self.displayName = displayName
@@ -84,6 +89,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         self.extendedBounds = extendedBounds
         self.statusBarHeight = statusBarHeight
         self.isFullScreenSpace = isFullScreenSpace
+        self.appMenuRightEdge = appMenuRightEdge
     }
     
     public static func == (lhs: NotchGeometry, rhs: NotchGeometry) -> Bool {
@@ -99,6 +105,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
                lhs.extendedBounds == rhs.extendedBounds &&
                lhs.statusBarHeight == rhs.statusBarHeight &&
                lhs.isFullScreenSpace == rhs.isFullScreenSpace &&
+               lhs.appMenuRightEdge == rhs.appMenuRightEdge &&
                lhs.safeAreaInsets.top == rhs.safeAreaInsets.top &&
                lhs.safeAreaInsets.bottom == rhs.safeAreaInsets.bottom &&
                lhs.safeAreaInsets.left == rhs.safeAreaInsets.left &&
@@ -112,9 +119,37 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         return point.y >= screenFrame.maxY - threshold && point.y <= screenFrame.maxY + 5.0
     }
 
+    /// 检查指定坐标是否处于外接平直屏中央 240pt 受限碰顶热区 (Ticket #44)
+    /// 水平中心 screenFrame.midX \pm (horizontalSpan / 2.0)，垂直顶边缘 maxY - verticalThreshold ... maxY
+    public func isPointInExternalCenterHotZone(
+        _ point: CGPoint,
+        horizontalSpan: CGFloat = 240.0,
+        verticalThreshold: CGFloat = 4.0
+    ) -> Bool {
+        let halfSpan = horizontalSpan / 2.0
+        let midX = screenFrame.midX
+        guard point.x >= midX - halfSpan && point.x <= midX + halfSpan else { return false }
+        return point.y >= screenFrame.maxY - verticalThreshold && point.y <= screenFrame.maxY + 5.0
+    }
+
+    /// 检查指定坐标是否处于外接平直屏全屏空间下的菜单栏中央协同区域 (Ticket #45)
+    /// 水平中心 screenFrame.midX \pm (horizontalSpan / 2.0)，垂直在已滑出的原生全屏菜单栏高度内
+    public func isPointInExternalFullScreenCenterBar(
+        _ point: CGPoint,
+        horizontalSpan: CGFloat = 240.0
+    ) -> Bool {
+        let halfSpan = horizontalSpan / 2.0
+        let midX = screenFrame.midX
+        guard point.x >= midX - halfSpan && point.x <= midX + halfSpan else { return false }
+        let barHeight = max(statusBarHeight, 24.0)
+        return point.y >= screenFrame.maxY - barHeight && point.y <= screenFrame.maxY + 5.0
+    }
+
     /// 根据当前溢出数量动态计算紧凑态几何边界
-    /// 0 溢出时严格 1:1 贴合刘海物理尺寸；加载中或有溢出时左侧动态长出耳翼完全避开摄像头黑胶
+    /// 物理刘海屏：0 溢出时严格 1:1 贴合刘海物理尺寸；加载中或有溢出时左侧动态长出耳翼完全避开摄像头黑胶
+    /// 平直无刘海屏：常态下 100% 隐形，紧凑矩形归零 (.zero)
     public func dynamicCompactBounds(for overflowCount: Int, isSyncing: Bool = false) -> CGRect {
+        guard hasPhysicalNotch else { return .zero }
         let leftWing = IslandWingMetrics.leftWingWidth(for: overflowCount, isSyncing: isSyncing)
         
         let compactWidth = physicalNotchRect.width + leftWing
@@ -132,9 +167,11 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
 
     /// 根据当前溢出的图标数量动态计算展开区域
     public func dynamicExtendedBounds(for overflowCount: Int, isSyncing: Bool = false) -> CGRect {
-        let leftWing = IslandWingMetrics.leftWingWidth(for: max(1, overflowCount), isSyncing: isSyncing)
+        let leftWing = hasPhysicalNotch ? IslandWingMetrics.leftWingWidth(for: max(1, overflowCount), isSyncing: isSyncing) : 0.0
         // 保证展开态两侧宽度至少包含紧凑态耳翼并向外预留呼吸空间，彻底消除徽标与齿轮被物理刘海遮挡
-        let minExtendedWidth: CGFloat = max(356.0, physicalNotchRect.width + 2.0 * leftWing + 32.0)
+        let minExtendedWidth: CGFloat = hasPhysicalNotch
+            ? max(356.0, physicalNotchRect.width + 2.0 * leftWing + 32.0)
+            : 356.0
         
         // 基础组件宽度（左右边距 28 + 齿轮按钮 28 + 数量徽章 40 + 容错间距 = 140）
         let baseWidth: CGFloat = 140.0
@@ -168,6 +205,9 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         overflowCount: Int,
         isSyncing: Bool = false
     ) -> NSRect {
+        if !isExpanded && !hasPhysicalNotch {
+            return .zero
+        }
         let compactBounds = dynamicCompactBounds(for: overflowCount, isSyncing: isSyncing)
         let compactWidth = compactBounds.width
         let compactHeight = statusBarHeight
@@ -177,7 +217,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         let currentHeight = isExpanded ? IslandTheme.Dimension.EXTENDED_HEIGHT : compactHeight
         
         // 计算耳翼相对刘海中心偏移量
-        let leftWing = isExpanded ? 0.0 : IslandWingMetrics.leftWingWidth(for: overflowCount, isSyncing: isSyncing)
+        let leftWing = isExpanded ? 0.0 : (hasPhysicalNotch ? IslandWingMetrics.leftWingWidth(for: overflowCount, isSyncing: isSyncing) : 0.0)
         let horizontalOffset = -leftWing / 2.0
         
         let x = (viewBounds.width - currentWidth) / 2.0 + horizontalOffset

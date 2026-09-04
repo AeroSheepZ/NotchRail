@@ -3,6 +3,7 @@ import AppKit
 
 /// 灵动岛根视图容器：基于单一流体底座（Morphing Base）驱动 Apple 级弹簧变形与分层级联入场
 public struct IslandRootView: View {
+    @ObservedObject var windowCoordinator = IslandWindowCoordinator.shared
     @ObservedObject var screenManager = ScreenManager.shared
     @ObservedObject var stateMachine = IslandStateMachine.shared
     @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
@@ -12,8 +13,8 @@ public struct IslandRootView: View {
     public init() {}
     
     public var body: some View {
-        let prefs = preferenceStore.preferences
-        let geometry = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
+        // 严格以当前物理 Panel 锚定的屏幕几何为单一真实来源 (Ticket #46 & #47)
+        let geometry = windowCoordinator.currentPanelGeometry
         
         let targetSnapshot = syncCoordinator.effectiveSnapshot(for: geometry.displayID)
         let isSyncing = syncCoordinator.isPrewarming || (targetSnapshot == nil)
@@ -28,7 +29,9 @@ public struct IslandRootView: View {
         
         let currentWidth = isExpanded ? dynamicWidth : compactWidth
         let currentHeight = isExpanded ? IslandTheme.Dimension.EXTENDED_HEIGHT : compactHeight
-        let currentCornerRadius = isExpanded ? IslandTheme.CornerRadius.EXTENDED_BOTTOM : IslandTheme.CornerRadius.COMPACT_BOTTOM
+        let currentCornerRadius: CGFloat = isExpanded
+            ? (geometry.hasPhysicalNotch ? IslandTheme.CornerRadius.EXTENDED_BOTTOM : IslandTheme.CornerRadius.SHELF_BOTTOM)
+            : IslandTheme.CornerRadius.COMPACT_BOTTOM
         
         // 计算紧凑态相对刘海中心的水平偏移（左耳翼向左延展，底座永不偏移摄像头）
         let leftWing = isExpanded ? 0.0 : IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: isSyncing)
@@ -36,9 +39,12 @@ public struct IslandRootView: View {
         
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // 1. 硬件级连续变形刘海底座（纯黑吸光底座 + 顶部开口微光描边）
-                IslandBackground(cornerRadius: currentCornerRadius)
-                    .frame(width: currentWidth, height: currentHeight)
+                // 1. 硬件级连续变形底座（物理刘海吸光底座 / 平直浮轨消耳毛玻璃 HUD）
+                IslandBackground(
+                    cornerRadius: currentCornerRadius,
+                    hasPhysicalNotch: geometry.hasPhysicalNotch
+                )
+                .frame(width: currentWidth, height: currentHeight)
                 
                 // 2. 灵动岛内部内容层（分层级联渲染）
                 VStack(spacing: 4) {

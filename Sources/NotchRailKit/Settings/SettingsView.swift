@@ -129,15 +129,15 @@ public struct SettingsView: View {
                 
                 switch preferenceStore.preferences.externalDisplayMode {
                 case .followFocusedScreen:
-                    Text("点击屏幕或切换前台窗口使屏幕获得焦点时，灵动岛自动跟随迁移至该屏幕。")
+                    Text("外接平直显示器采用「按需悬浮浮轨（Floating Shelf）」，常态 100% 隐形、零固定假胶囊；碰顶中央热区即时展开，收起后视口自动归还内置刘海屏。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .mainScreenOnly:
-                    Text("灵动岛始终固定在内置刘海屏或主显示器顶部，不在外接屏幕显示。")
+                    Text("灵动岛始终固定在内置刘海屏或主显示器顶部，外接平直屏幕不激活悬浮浮轨。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .disabled:
-                    Text("仅在内置刘海屏启用灵动岛，连接外接屏幕时在外接屏完全隐藏。")
+                    Text("仅在内置刘海屏启用灵动岛，外接显示器完全禁用且不响应碰顶热区。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -612,7 +612,7 @@ public struct SettingsView: View {
                     Text("NotchRail")
                         .font(.title3.weight(.bold))
                     
-                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.7"
+                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.8"
                     let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "7"
                     Text("Extended Menu Bar for MacBook Notch · v\(version) (\(build))")
                         .font(.subheadline)

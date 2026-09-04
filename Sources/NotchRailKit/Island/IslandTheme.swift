@@ -10,6 +10,8 @@ public enum IslandTheme {
         public static let COMPACT_BOTTOM: CGFloat = 11.0
         /// 展开态大卡片底部圆角
         public static let EXTENDED_BOTTOM: CGFloat = 14.0
+        /// 外接平直悬浮浮轨展开态底部大圆角（Ticket #47）
+        public static let SHELF_BOTTOM: CGFloat = 24.0
         /// 顶部与屏幕边框连接的外展平滑倒角（喇叭口）
         public static let TOP_EAR: CGFloat = 5.0
         /// 图标与小组件药丸圆角
@@ -65,5 +67,13 @@ public enum IslandTheme {
         public static let CELL_HOVER = Color.white.opacity(0.16)
         public static let CELL_REST = Color.white.opacity(0.04)
         public static let TRAY_YELLOW = Color.yellow.opacity(0.95)
+    }
+    
+    // MARK: - 原生 HUD 软阴影 (Shadow - SPEC Decision 6)
+    public enum Shadow {
+        public static let COLOR = Color.black.opacity(0.18)
+        public static let RADIUS: CGFloat = 12.0
+        public static let X: CGFloat = 0.0
+        public static let Y: CGFloat = 4.0
     }
 }

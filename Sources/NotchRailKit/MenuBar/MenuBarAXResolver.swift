@@ -53,6 +53,80 @@ public actor MenuBarAXResolver {
         return best?.entry
     }
 
+    /// 异步提取前台 App 菜单栏在特定屏幕水平范围内的最右端坐标（Quartz 坐标系）
+    /// - Parameter screenBounds: 目标屏幕的几何边界（Quartz / Cocoa 水平 X 轴坐标对齐）
+    /// - Returns: 若成功探测返回最右侧菜单项的 maxX；若为 Finder、无菜单或探测失败返回安全基准 `screenBounds.minX + NotchGeometry.DEFAULT_APP_MENU_WIDTH`；若前台 App 无效、终止或为自身返回 nil
+    public func fetchFrontmostAppMenuMaxX(for screenBounds: CGRect) -> CGFloat? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              !app.isTerminated,
+              app.processIdentifier != getpid() else {
+            return nil
+        }
+
+        let defaultEdge = screenBounds.minX + NotchGeometry.DEFAULT_APP_MENU_WIDTH
+
+        // 访达特殊处理：直接返回安全基准
+        if app.bundleIdentifier == "com.apple.finder" {
+            return defaultEdge
+        }
+
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(element, 0.1)
+
+        var menuBarValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXMenuBarAttribute as CFString, &menuBarValue) == .success,
+              let menuBar = menuBarValue,
+              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else {
+            return defaultEdge
+        }
+
+        let menuBarElem = menuBar as! AXUIElement
+        AXUIElementSetMessagingTimeout(menuBarElem, 0.1)
+
+        var childrenValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(menuBarElem, kAXChildrenAttribute as CFString, &childrenValue) == .success,
+              let children = childrenValue as? [AXUIElement],
+              !children.isEmpty else {
+            return defaultEdge
+        }
+
+        var maxItemX: CGFloat?
+
+        for child in children {
+            AXUIElementSetMessagingTimeout(child, 0.05)
+            var posVal: CFTypeRef?
+            var sizeVal: CFTypeRef?
+            var pt = CGPoint.zero
+            var sz = CGSize.zero
+
+            if AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString, &posVal) == .success,
+               let posVal, CFGetTypeID(posVal) == AXValueGetTypeID() {
+                AXValueGetValue(posVal as! AXValue, .cgPoint, &pt)
+            } else {
+                continue
+            }
+
+            if AXUIElementCopyAttributeValue(child, kAXSizeAttribute as CFString, &sizeVal) == .success,
+               let sizeVal, CFGetTypeID(sizeVal) == AXValueGetTypeID() {
+                AXValueGetValue(sizeVal as! AXValue, .cgSize, &sz)
+            } else {
+                continue
+            }
+
+            let itemMaxX = pt.x + sz.width
+            // 判断是否落在该屏幕的水平跨度内（包含 1pt 容差）
+            if pt.x >= screenBounds.minX - 1.0 && pt.x < screenBounds.maxX {
+                if let currentMax = maxItemX {
+                    maxItemX = max(currentMax, itemMaxX)
+                } else {
+                    maxItemX = itemMaxX
+                }
+            }
+        }
+
+        return maxItemX ?? defaultEdge
+    }
+
     /// 提取系统运行应用的菜单栏真实身份与坐标（增量毫秒级扫描）
     private func performAXScan() -> [Entry] {
         guard AXIsProcessTrusted() else { return [] }

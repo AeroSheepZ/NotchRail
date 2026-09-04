@@ -22,17 +22,23 @@ public enum SpikeRunner {
         // 2. 屏幕与刘海测量 (Ticket 03)
         print("\n2️⃣ [屏幕几何与刘海测量 (ScreenManager)]")
         ScreenManager.shared.refreshAllScreens()
+        for screen in NSScreen.screens {
+            if let maxX = await MenuBarAXResolver.shared.fetchFrontmostAppMenuMaxX(for: screen.frame) {
+                ScreenManager.shared.updateAppMenuRightEdge(maxX, for: screen.displayID)
+            }
+        }
         let allScreens = ScreenManager.shared.allGeometries
         print("   - 当前已连接显示器数量: \(allScreens.count) 台")
         
         for (idx, geom) in allScreens.enumerated() {
-            let notchStatus = geom.hasPhysicalNotch ? "物理刘海 (MacBook)" : "虚拟锚点 (外接/无刘海)"
+            let notchStatus = geom.hasPhysicalNotch ? "物理刘海 (MacBook)" : "平直屏幕 (外接/无刘海)"
             print("   👉 [Display #\(idx + 1)] \"\(geom.displayName)\" (ID: \(geom.displayID), \(notchStatus)):")
             print("      • 屏幕分辨率: \(Int(geom.screenFrame.width)) × \(Int(geom.screenFrame.height)) pt (Scale: \(geom.scaleFactor)x)")
             print("      • 状态栏高度: \(Int(geom.statusBarHeight)) pt, Top Inset: \(Int(geom.safeAreaInsets.top)) pt")
             print("      • 刘海/锚点区域: (\(Int(geom.physicalNotchRect.minX)), \(Int(geom.physicalNotchRect.minY)), \(Int(geom.physicalNotchRect.width))x\(Int(geom.physicalNotchRect.height)))")
             print("      • Compact 胶囊预设: (\(Int(geom.compactBounds.minX)), \(Int(geom.compactBounds.minY)), \(Int(geom.compactBounds.width))x\(Int(geom.compactBounds.height)))")
             print("      • Extended 展开预设: (\(Int(geom.extendedBounds.minX)), \(Int(geom.extendedBounds.minY)), \(Int(geom.extendedBounds.width))x\(Int(geom.extendedBounds.height)))")
+            print("      • App 菜单右边缘: \(geom.appMenuRightEdge.map { "\(Int($0)) pt" } ?? "未测定/无")")
         }
         
         let activeGeom = ScreenManager.shared.currentGeometry
@@ -44,13 +50,29 @@ public enum SpikeRunner {
         let elapsedMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
         
         print("   - 扫描耗时: \(String(format: "%.2f", elapsedMs)) ms")
-        print("   - 扫描到菜单栏项总数: \(rawItems.count) 个")
+        print("   - 当前活动屏扫描到菜单栏项总数: \(rawItems.count) 个")
         
-        // 4. 几何溢出计算
-        print("\n4️⃣ [几何溢出判定计算 (OverflowCalculator)]")
+        // 4. 多屏幕几何溢出判定计算 (Ticket #49)
+        print("\n4️⃣ [多屏幕几何溢出判定计算 (OverflowCalculator)]")
+        for (idx, geom) in allScreens.enumerated() {
+            let notchStatus = geom.hasPhysicalNotch ? "物理刘海屏" : "平直外接屏"
+            let menuEdgeStr = geom.appMenuRightEdge.map { "\(Int($0)) pt" } ?? "未测定/无"
+            let itemsForGeom = (geom.displayID == activeGeom.displayID)
+                ? rawItems
+                : await MenuBarWindowScanner.shared.scanMenuBarItems(for: geom)
+            let snap = OverflowCalculator.resolve(items: itemsForGeom, geometry: geom)
+            print("   👉 [Display #\(idx + 1)] \"\(geom.displayName)\" (ID: \(geom.displayID), \(notchStatus)):")
+            print("      • 动态 App 菜单碰撞边界: \(menuEdgeStr)")
+            print("      • 扫描菜单项总数: \(snap.allItems.count) 个")
+            print("      • 原生可见项 (Visible): \(snap.visibleItems.count) 个")
+            print("      • 溢出/受阻项 (Overflowed -> 岛内展示): \(snap.overflowItems.count) 个")
+            if !snap.overflowItems.isEmpty {
+                let overflowNames = snap.overflowItems.map { $0.title ?? $0.bundleIdentifier ?? "Win#\($0.windowID)" }.joined(separator: ", ")
+                print("      • 实时溢出项列表: \(overflowNames)")
+            }
+        }
+        
         let snapshot = OverflowCalculator.resolve(items: rawItems, geometry: activeGeom)
-        print("   - 原生可见项 (Visible): \(snapshot.visibleItems.count) 个")
-        print("   - 溢出/受阻项 (Overflowed -> 灵动岛展示): \(snapshot.overflowItems.count) 个")
         
         // 5. 图标解析实测（批量窗口截图）
         print("\n5️⃣ [图标解析实测 (IconResolver 批量窗口截图)]")
@@ -178,10 +200,9 @@ public enum SpikeRunner {
         check(snapshot3.allItems.first?.displayMode == .ignored, "Test 3: Display mode not ignored")
         print("   ✅ Case 3 通过: 忽略名单中的项正确标记为 ignored")
         
-        // 测试 4: 外接屏幕虚拟锚点几何判定
+        // 测试 4: 外接平直屏幕零刘海几何判定
         let extScreenFrame = CGRect(x: 0, y: 0, width: 3840, height: 2160)
         let extVisibleFrame = CGRect(x: 0, y: 0, width: 3840, height: 2136)
-        let extNotchRect = CGRect(x: (3840 - 160) / 2, y: 2160 - 34, width: 160, height: 34)
         let extGeometry = NotchGeometry(
             displayID: 2,
             displayName: "External 4K",
@@ -191,14 +212,17 @@ public enum SpikeRunner {
             screenFrame: extScreenFrame,
             visibleFrame: extVisibleFrame,
             safeAreaInsets: NSEdgeInsets(),
-            physicalNotchRect: extNotchRect,
-            compactBounds: CGRect(x: (3840 - 172) / 2, y: 2160 - 36, width: 172, height: 36),
+            physicalNotchRect: .zero,
+            compactBounds: .zero,
             extendedBounds: CGRect(x: (3840 - 720) / 2, y: 2160 - 84, width: 720, height: 84),
-            statusBarHeight: 24
+            statusBarHeight: 24,
+            appMenuRightEdge: 420.0
         )
         check(!extGeometry.hasPhysicalNotch, "Test 4: External screen should not have physical notch")
-        check(extGeometry.physicalNotchRect.origin.x == 1840, "Test 4: Virtual notch center calculation")
-        print("   ✅ Case 4 通过: 外接 4K 显示器虚拟居中锚点计算准确")
+        check(extGeometry.physicalNotchRect == .zero, "Test 4: Flat screen physicalNotchRect must be .zero")
+        check(extGeometry.compactBounds == .zero, "Test 4: Flat screen compactBounds must be .zero")
+        check(extGeometry.appMenuRightEdge == 420.0, "Test 4: appMenuRightEdge must be preserved")
+        print("   ✅ Case 4 通过: 外接平直显示器真实零刘海与动态菜单边缘契约验证无误")
         
         // Test 5: IslandStateMachine Transitions
         let sm = IslandStateMachine()
@@ -235,9 +259,8 @@ public enum SpikeRunner {
         check(borderSnapshot.overflowItems.count == 1 && borderSnapshot.overflowItems.first?.title == "BorderInside", "Test 6: 0.5pt into notch should overflow")
         print("   ✅ Case 6 通过: 临界刘海边缘坐标 0.5pt 级高精度溢出判定")
         
-        // Test 7: Multi-display Offset Screen
+        // Test 7: Multi-display Offset Screen (Flat display real menu collision)
         let offsetScreenFrame = CGRect(x: 2560, y: 0, width: 2560, height: 1440)
-        let offsetNotchRect = CGRect(x: 2560 + (2560 - 160) / 2, y: 1440 - 34, width: 160, height: 34)
         let offsetGeometry = NotchGeometry(
             displayID: 3,
             displayName: "Secondary Screen",
@@ -247,10 +270,11 @@ public enum SpikeRunner {
             screenFrame: offsetScreenFrame,
             visibleFrame: offsetScreenFrame,
             safeAreaInsets: NSEdgeInsets(),
-            physicalNotchRect: offsetNotchRect,
-            compactBounds: CGRect(x: 2560 + 1200, y: 1404, width: 172, height: 36),
+            physicalNotchRect: .zero,
+            compactBounds: .zero,
             extendedBounds: CGRect(x: 2560 + 920, y: 1356, width: 720, height: 84),
-            statusBarHeight: 24
+            statusBarHeight: 24,
+            appMenuRightEdge: 2560 + 1100.0
         )
         let offsetVisible = MenuBarItem(
             processIdentifier: 701,
@@ -262,7 +286,7 @@ public enum SpikeRunner {
             processIdentifier: 702,
             bundleIdentifier: "com.offset.overflow",
             title: "OffsetOverflow",
-            nativeFrame: CGRect(x: 3600, y: 1410, width: 30, height: 24)
+            nativeFrame: CGRect(x: 2560 + 1050, y: 1410, width: 30, height: 24)
         )
         let offsetSnapshot = OverflowCalculator.resolve(items: [offsetVisible, offsetOverflow], geometry: offsetGeometry)
         check(offsetSnapshot.visibleItems.count == 1 && offsetSnapshot.visibleItems.first?.title == "OffsetVisible", "Test 7: Offset screen visible mismatch")
@@ -347,5 +371,116 @@ public enum SpikeRunner {
         )
         check(snapWithItems.overflowCount == snapWithItems.overflowItems.count, "Test 14: overflowCount property mismatch")
         print("   ✅ Case 14 通过: MenuBarSnapshot.overflowCount 属性计算一致性验证通过")
+        
+        // Test 15: 前台 App 菜单栏右边界探测与 ScreenManager 原子注入 (Ticket 4, #43)
+        let mockFlatBounds = CGRect(x: 2560, y: 0, width: 2560, height: 1440)
+        let menuMaxX = await MenuBarAXResolver.shared.fetchFrontmostAppMenuMaxX(for: mockFlatBounds)
+        if let menuMaxX = menuMaxX {
+            check(menuMaxX >= mockFlatBounds.minX + 180.0, "Test 15: App menu maxX below baseline")
+        }
+        
+        if let targetScreen = ScreenManager.shared.allGeometries.first {
+            let originalEdge = targetScreen.appMenuRightEdge
+            let testEdge = targetScreen.screenFrame.minX + 450.0
+            ScreenManager.shared.updateAppMenuRightEdge(testEdge, for: targetScreen.displayID)
+            let injectedGeom = ScreenManager.shared.geometry(for: targetScreen.displayID)
+            check(injectedGeom?.appMenuRightEdge == testEdge, "Test 15: Injected appMenuRightEdge mismatch")
+            ScreenManager.shared.updateAppMenuRightEdge(originalEdge, for: targetScreen.displayID)
+        }
+        print("   ✅ Case 15 通过: 前台 App 菜单栏右边界异步探测与 ScreenManager 原子注入契约通过")
+        
+        // Test 16: Flat Display Wide Open Space No Ghost Overflow
+        let flatWideGeometry = NotchGeometry(
+            displayID: 4,
+            displayName: "Flat Wide Screen",
+            isBuiltIn: false,
+            hasPhysicalNotch: false,
+            scaleFactor: 1.0,
+            screenFrame: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            visibleFrame: CGRect(x: 0, y: 0, width: 2560, height: 1416),
+            safeAreaInsets: NSEdgeInsets(),
+            physicalNotchRect: .zero,
+            compactBounds: .zero,
+            extendedBounds: CGRect(x: (2560 - 720) / 2, y: 1440 - 84, width: 720, height: 84),
+            statusBarHeight: 24,
+            appMenuRightEdge: 400.0
+        )
+        let midScreenItem = MenuBarItem(
+            processIdentifier: 901,
+            bundleIdentifier: "com.test.mid",
+            title: "MidScreenItem",
+            nativeFrame: CGRect(x: 1200, y: 1410, width: 30, height: 24)
+        )
+        let flatSnapshot = OverflowCalculator.resolve(items: [midScreenItem], geometry: flatWideGeometry)
+        check(flatSnapshot.overflowItems.count == 0, "Test 16: Flat display item crossing midpoint should not overflow")
+        check(flatSnapshot.visibleItems.count == 1, "Test 16: Flat display visible item count mismatch")
+        print("   ✅ Case 16 通过: 平直大屏短菜单跨过中点零幽灵溢出契约通过")
+        
+        // Test 17: Out of Bounds Items Overflow Detection
+        let rightOutItem = MenuBarItem(
+            processIdentifier: 902,
+            bundleIdentifier: "com.test.rightout",
+            title: "RightOut",
+            nativeFrame: CGRect(x: 1515, y: 955, width: 30, height: 24)
+        )
+        let leftOutItem = MenuBarItem(
+            processIdentifier: 903,
+            bundleIdentifier: "com.test.leftout",
+            title: "LeftOut",
+            nativeFrame: CGRect(x: -30, y: 955, width: 20, height: 24)
+        )
+        let outSnapshot = OverflowCalculator.resolve(items: [rightOutItem, leftOutItem], geometry: mockGeometry)
+        check(outSnapshot.overflowItems.count == 2, "Test 17: Out of bounds items must be marked as overflowed")
+        print("   ✅ Case 17 通过: 屏幕边缘越界项 (超右界 / 超左界) 纯几何溢出判定通过")
+        
+        // Test 18: 视口借调流转架构 (Viewport Leasing) 与单一可信源契约 (Ticket #46)
+        let coordinator = IslandWindowCoordinator.shared
+        coordinator.start()
+        let panelGeom = coordinator.currentPanelGeometry
+        check(panelGeom.screenFrame.width > 0 && panelGeom.screenFrame.height > 0, "Test 18: currentPanelGeometry must be valid")
+        if !IslandStateMachine.shared.currentState.isExpanded {
+            check(!coordinator.isLeasedToExternal, "Test 18: Default unexpanded state must not be leased")
+        }
+        print("   ✅ Case 18 通过: 视口借调流转架构 (Viewport Leasing) 与合盖模式单一可信源契约通过")
+        
+        // Test 19: 平直悬浮浮轨 (Floating Shelf) 消耳平直贴顶与 HUD 质感契约 (SPEC Decision 6)
+        check(IslandTheme.CornerRadius.SHELF_BOTTOM == 24.0, "Test 19: SHELF_BOTTOM must be 24.0")
+        check(IslandTheme.Shadow.RADIUS == 12.0, "Test 19: Shadow radius must be 12.0")
+        check(IslandTheme.Shadow.Y == 4.0, "Test 19: Shadow Y offset must be 4.0")
+        
+        let shelfRect = CGRect(x: 0, y: 0, width: 600, height: 84)
+        let flatShape = NotchShape(bottomCornerRadius: 24.0, topEarRadius: 0.0)
+        let flatPath = flatShape.path(in: shelfRect)
+        let flatBounds = flatPath.boundingRect
+        check(flatBounds.minX == 0 && flatBounds.minY == 0 && flatBounds.maxX == 600 && flatBounds.maxY == 84, "Test 19: Flat shelf shape must be perfectly rectangular at the top edge")
+        
+        let flatInteractiveCollapsed = extGeometry.interactiveBounds(
+            in: NSRect(x: 0, y: 0, width: 800, height: 84),
+            isExpanded: false,
+            overflowCount: 5
+        )
+        check(flatInteractiveCollapsed == .zero, "Test 19: Flat display collapsed interactive bounds must be .zero")
+        
+        let flatInteractiveExpanded = extGeometry.interactiveBounds(
+            in: NSRect(x: 0, y: 0, width: 800, height: 84),
+            isExpanded: true,
+            overflowCount: 5
+        )
+        check(flatInteractiveExpanded.width > 0 && flatInteractiveExpanded.height == 84.0, "Test 19: Flat display expanded interactive bounds must match floating shelf")
+        print("   ✅ Case 19 通过: 平直悬浮浮轨 (Floating Shelf) 消耳吸顶、24pt 圆角与 HUD Hit-Test 契约通过")
+        
+        // Test 20: 点击外部即时收起 (Dismiss on Click Outside) 与穿透契约 (Ticket #48 & #49)
+        IslandStateMachine.shared.triggerExpand(overflowCount: 4)
+        check(IslandStateMachine.shared.currentState.isExpanded, "Test 20: Island must be expanded")
+        let currentGeom = IslandWindowCoordinator.shared.currentPanelGeometry
+        let activeRect = currentGeom.interactiveScreenRect(isExpanded: true, overflowCount: 4)
+        // 点击在展开区域内部：保持展开
+        MouseMonitor.shared.simulateClick(at: CGPoint(x: activeRect.midX, y: activeRect.midY))
+        check(IslandStateMachine.shared.currentState.isExpanded, "Test 20: Click inside must keep expanded state")
+        // 点击在展开区域外部：驱动即时收起
+        MouseMonitor.shared.simulateClick(at: CGPoint(x: activeRect.midX, y: activeRect.minY - 100.0))
+        check(!IslandStateMachine.shared.currentState.isExpanded, "Test 20: Click outside must trigger collapse")
+        check(IslandStateMachine.shared.currentState == .compact, "Test 20: State must return to compact")
+        print("   ✅ Case 20 通过: 点击外部即时收起 (Dismiss on Click Outside) 与穿透状态机自愈契约通过")
     }
 }

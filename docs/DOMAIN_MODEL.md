@@ -60,6 +60,7 @@ classDiagram
         +CGRect compactBounds
         +CGRect extendedBounds
         +Bool isFullScreenSpace
+        +CGFloat? appMenuRightEdge
         +isPointInTopEdgeHotZone(CGPoint, CGFloat) Bool
     }
 
@@ -201,16 +202,54 @@ public final class FullScreenDetector {
 }
 ```
 
+### 2.6 屏幕几何与刘海/菜单碰撞契约 (`NotchGeometry`)
+表示单一显示器的物理测绘几何参数与状态栏环境，是双轨溢出判定与视口布局的核心值对象。
+
+```swift
+public struct NotchGeometry: Equatable, Sendable, Identifiable {
+    public let displayID: CGDirectDisplayID
+    public let displayName: String
+    public let isBuiltIn: Bool
+    public let hasPhysicalNotch: Bool
+    public let scaleFactor: CGFloat
+    public let screenFrame: CGRect
+    public let visibleFrame: CGRect
+    public let safeAreaInsets: NSEdgeInsets
+    public let physicalNotchRect: CGRect
+    public let compactBounds: CGRect
+    public let extendedBounds: CGRect
+    public let statusBarHeight: CGFloat
+    public let isFullScreenSpace: Bool
+    public let appMenuRightEdge: CGFloat?
+    
+    /// 初始化几何参数（平直屏 appMenuRightEdge 初始默认为 nil）
+    public init(...)
+}
+```
+
+- **物理刘海屏 (`hasPhysicalNotch == true`)**：
+  - `physicalNotchRect`：严格取自硬件刘海物理矩形；
+  - `compactBounds`：常驻紧凑胶囊，以物理刘海为锚点，左侧根据溢出项动态伸出耳翼；
+  - `appMenuRightEdge`：设为 `nil`（物理刘海屏溢出完全基于物理刘海右侧过渡区安全余量判定）。
+- **平直外接屏 (`hasPhysicalNotch == false`)**：
+  - `physicalNotchRect`：严格归零（`.zero`），废除假想 160pt 虚拟刘海；
+  - `compactBounds`：常态归零（`.zero`），面板 100% 隐形（`alpha = 0`，`ignoresMouseEvents = true`）；
+  - `appMenuRightEdge`：动态捕获前台活跃应用主菜单的右边缘 X 坐标，作为状态项挤压碰撞阈值；
+  - 展开形态：吸顶平直悬浮托轨 `FloatingShelf`（`topEarRadius = 0.0`），视口采用借调（`ViewportLease`）机制。
+
 ---
 
 ## 3. 溢出计算与多屏几何规范 (`OverflowCalculator`)
 
+`OverflowCalculator` 负责将 WindowServer 枚举出的原始状态项划分为可见项（`visibleItems`）与溢出项（`overflowItems`），执行纯几何物理判定，坚决杜绝依赖 `!item.isOnScreen`：
+
 ```swift
 public enum OverflowCalculator {
-    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 12.0
+    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 24.0 // 物理刘海右过渡区余量
+    public static let APP_MENU_COLLISION_MARGIN: CGFloat = 12.0  // 平直屏菜单碰撞安全余量
     public static let SCREEN_EDGE_TOLERANCE: CGFloat = 5.0
     
-    /// 综合判定：底层 isOnScreen 标记 + 刘海圆角安全边界 + 屏幕左右边界溢出
+    /// 双轨判定：物理刘海过渡区余量 / 平直屏 App 菜单边缘碰撞 + 屏幕左右边界越界
     public static func resolve(
         items: [MenuBarItem],
         geometry: NotchGeometry,
@@ -218,6 +257,13 @@ public enum OverflowCalculator {
     ) -> MenuBarSnapshot
 }
 ```
+
+- **物理刘海屏双轨判定**：
+  - `frame.minX < geometry.physicalNotchRect.maxX + NOTCH_CORNER_SAFETY_MARGIN`
+- **平直外接屏双轨判定**：
+  - 当 `geometry.hasPhysicalNotch == false` 时，若 `geometry.appMenuRightEdge` 存在，判定 `frame.minX < appMenuRightEdge + APP_MENU_COLLISION_MARGIN`；
+- **通配屏幕越界判定**：
+  - `frame.maxX > screenMaxX + SCREEN_EDGE_TOLERANCE` 或 `frame.maxX < screenMinX`。
 
 ---
 
@@ -252,4 +298,20 @@ stateDiagram-v2
 | `FullScreenStateChanged` | 前台应用切换全屏或 Space 切换 | `isFullScreen: Bool` | `IslandWindowCoordinator`, `MouseMonitor` |
 | `PreferencesChanged` | 用户设置（打开方式、外接屏模式、延迟、黑名单等）变动 | `preferences: UserPreferences` | `IslandStateMachine`, `IslandWindowCoordinator`, `StatusItemManager` |
 | `PermissionStatusChanged` | 辅助功能或屏幕录制权限授予状态变化 | `isGranted: Bool` | `PermissionWindowCoordinator`, `SettingsView` |
+
+---
+
+## 6. 架构决策记录矩阵 (ADR Mapping Matrix)
+
+本领域模型规范与全局架构决策记录（Architecture Decision Records, ADR）严格对齐：
+
+| ADR 编号 | 决策主题 | 影响模型 / 契约 | 核心要点 |
+| :--- | :--- | :--- | :--- |
+| **ADR 0001** | AX 空间几何反查映射 | `MenuBarAXResolver`, `AXEntry` | 解决扩展屏宿主代管进程 PID 假象，基于物理坐标反查真实应用 |
+| **ADR 0002** | 外接平直屏物理零刘海与视口借调 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` | 平直屏 `physicalNotchRect == .zero`，动态菜单碰撞，常态 0 像素隐形，展开采用 Floating Shelf（`topEarRadius = 0`），视口借调流转 |
+| **ADR 0003** | 纯物理几何判定并废弃 isOnScreen | `OverflowCalculator`, `MenuBarItem` | 纯几何 X 轴判定，杜绝 Space 切换引发的瞬态全量误溢出 |
+| **ADR 0004** | 零降级真实位图像素级镜像 | `CapturedIcon`, `IconResolver` | 逐窗原生截图、透明裁切与视觉相等比对，严禁彩色 Dock 图标降级 |
+| **ADR 0005** | 原生物理坐标合成事件精准分发 | `MenuBarItem`, `CGEvent` | 使用原位物理坐标通过 postToPid 触发原生下拉菜单 |
+| **ADR 0006** | 稳固常驻视口与硬件级穿透管理 | `IslandWindowCoordinator`, `MouseMonitor` | 84pt 吸顶常驻视口，动态控制 `ignoresMouseEvents`，透明区 100% 物理直通 |
+| **ADR 0007** | 全屏空间隐退与顶边缘极窄热区唤醒 | `FullScreenDetector`, `NotchGeometry` | 全屏下面板隐退，光标触碰顶边缘 $\le 2\text{pt}$ 热区平滑淡入唤醒 |
 

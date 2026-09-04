@@ -5,6 +5,8 @@ import CoreGraphics
 public enum OverflowCalculator {
     /// 刘海右侧圆角过渡区安全容差（pt，适配 MacBook 物理刘海圆角与系统内衬安全边界）
     public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 24.0
+    /// 应用菜单碰撞过渡安全容差（pt，平直外接显示器前台应用菜单与右侧状态项安全间隔，12pt）
+    public static let APP_MENU_COLLISION_SAFETY_MARGIN: CGFloat = 12.0
     /// 屏幕边缘溢出容差（pt）
     public static let SCREEN_EDGE_TOLERANCE: CGFloat = 5.0
     
@@ -18,6 +20,15 @@ public enum OverflowCalculator {
         let screenMinX = geometry.screenFrame.minX
         let screenMaxX = geometry.screenFrame.maxX
         
+        // 双轨判定：物理刘海屏 vs 平直外接屏
+        let collisionBoundary: CGFloat
+        if geometry.hasPhysicalNotch {
+            collisionBoundary = notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN
+        } else {
+            let appMenuEdge = geometry.appMenuRightEdge ?? (screenMinX + NotchGeometry.DEFAULT_APP_MENU_WIDTH)
+            collisionBoundary = appMenuEdge + APP_MENU_COLLISION_SAFETY_MARGIN
+        }
+        
         let resolvedItems = items.map { item -> MenuBarItem in
             var updated = item
             
@@ -30,11 +41,11 @@ public enum OverflowCalculator {
             let frame = item.nativeFrame
             
             // 2. 纯几何物理溢出判定：
-            // - 左边界侵入刘海右边缘圆角过渡区 (frame.minX < notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN)
+            // - 左边界侵入碰撞安全边界 (frame.minX < collisionBoundary)
             // - 超出屏幕右边界 (frame.maxX > screenMaxX + SCREEN_EDGE_TOLERANCE)
             // - 超出屏幕左边界 (frame.maxX < screenMinX)
             // 严禁依赖 !item.isOnScreen：全屏或 Space 切换折叠菜单栏时 WindowServer 会将所有菜单项标记为未上屏，依赖该状态会导致整个菜单栏被误判为全部溢出！
-            let isOverflown = frame.minX < (notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN) ||
+            let isOverflown = frame.minX < collisionBoundary ||
                               frame.maxX > (screenMaxX + SCREEN_EDGE_TOLERANCE) ||
                               frame.maxX < screenMinX
             
