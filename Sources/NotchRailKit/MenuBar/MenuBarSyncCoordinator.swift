@@ -63,7 +63,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     }
     
     /// 安排一次扫描任务（支持 100ms 敏捷防抖）
-    public func scheduleSync(immediate: Bool = false, showProgress: Bool = true) {
+    public func scheduleSync(immediate: Bool = false, showProgress: Bool = false) {
         debounceTimer?.invalidate()
         debounceTimer = nil
         
@@ -79,7 +79,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     }
     
     /// 执行后台扫描、多屏预热与图标同步解析
-    private func performSync(showProgress: Bool = true) {
+    private func performSync(showProgress: Bool = false) {
         let currentGeom = ScreenManager.shared.currentGeometry
         guard !isScanning else {
             if showProgress {
@@ -107,15 +107,29 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 await IconResolver.shared.resolveIcons(for: currentSnapshot.allItems)
             }
             
-            // 3. 并行预热其他连接屏幕
-            var otherSnapshots: [CGDirectDisplayID: MenuBarSnapshot] = [:]
-            for otherGeom in allGeometries where otherGeom.displayID != currentGeom.displayID {
-                let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
-                let otherSnap = OverflowCalculator.resolve(items: otherItems, geometry: otherGeom, ignoredBundleIDs: ignoredIDs)
-                if !otherSnap.allItems.isEmpty {
-                    await IconResolver.shared.resolveIcons(for: otherSnap.allItems)
+            // 3. 立即原子发布当前活动屏幕快照，杜绝快照与图标状态发布时间差
+            await MainActor.run {
+                self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
+                if currentSnapshot.displayID == ScreenManager.shared.currentGeometry.displayID {
+                    self.latestSnapshot = currentSnapshot
+                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
                 }
-                otherSnapshots[otherGeom.displayID] = otherSnap
+            }
+            
+            // 4. 并行预热其他连接屏幕（仅在初次未扫描或显式重扫时执行，日常切屏与心跳绝不重复截取副屏）
+            var otherSnapshots: [CGDirectDisplayID: MenuBarSnapshot] = [:]
+            let hasUnwarmedDisplays = allGeometries.contains { $0.displayID != currentGeom.displayID && self.snapshotsByDisplay[$0.displayID] == nil }
+            if showProgress || hasUnwarmedDisplays {
+                for otherGeom in allGeometries where otherGeom.displayID != currentGeom.displayID {
+                    if showProgress || self.snapshotsByDisplay[otherGeom.displayID] == nil {
+                        let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
+                        let otherSnap = OverflowCalculator.resolve(items: otherItems, geometry: otherGeom, ignoredBundleIDs: ignoredIDs)
+                        if !otherSnap.allItems.isEmpty {
+                            await IconResolver.shared.resolveIcons(for: otherSnap.allItems)
+                        }
+                        otherSnapshots[otherGeom.displayID] = otherSnap
+                    }
+                }
             }
             
             // 若开启了加载进度动画，保证至少维持 500ms 完整旋转周期，避免右耳翼闪退抽搐
@@ -126,7 +140,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             
             await MainActor.run {
-                // 4. 汇总所有活动屏幕发现的实时应用至全局注册池（原子替换，剔除已退出的应用）
+                // 5. 汇总所有活动屏幕发现的实时应用至全局注册池（原子替换，剔除已退出的应用）
                 var newDiscoveredMap: [String: MenuBarItem] = [:]
                 for item in currentSnapshot.allItems {
                     let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
@@ -143,16 +157,9 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 self.discoveredItemsMap = newDiscoveredMap
                 self.allDiscoveredItems = Array(newDiscoveredMap.values).sorted { ($0.title ?? "") < ($1.title ?? "") }
                 
-                // 5. 更新多屏快照池缓存
-                self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
+                // 6. 更新副屏快照池缓存
                 for (dispID, snap) in otherSnapshots {
                     self.snapshotsByDisplay[dispID] = snap
-                }
-                
-                // 6. 发布当前活动屏幕快照
-                if currentSnapshot.displayID == ScreenManager.shared.currentGeometry.displayID {
-                    self.latestSnapshot = currentSnapshot
-                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
                 }
                 
                 self.isPrewarming = false
@@ -201,27 +208,33 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             .sink { [weak self] _ in self?.scheduleSync() }
             .store(in: &cancellables)
         
-        // 监听屏幕几何与焦点屏幕变更
+        // 监听屏幕几何与焦点屏幕变更：切屏跟随由 UI 视口 0ms 直出，若目标屏幕无快照才执行静默补充预热
         NotificationCenter.default.publisher(for: .activeDisplayChanged)
-            .sink { [weak self] _ in self?.scheduleSync(immediate: true) }
+            .sink { [weak self] notif in
+                guard let self = self else { return }
+                if let geom = notif.object as? NotchGeometry,
+                   self.snapshotsByDisplay[geom.displayID] == nil {
+                    self.scheduleSync(immediate: true, showProgress: false)
+                }
+            }
             .store(in: &cancellables)
         
         NotificationCenter.default.publisher(for: .notchGeometryChanged)
-            .sink { [weak self] _ in self?.scheduleSync(immediate: true) }
+            .sink { [weak self] _ in self?.scheduleSync(immediate: true, showProgress: false) }
             .store(in: &cancellables)
         
         // 监听权限授予事件
         NotificationCenter.default.publisher(for: .permissionStatusChanged)
             .sink { [weak self] notif in
                 if let granted = notif.object as? Bool, granted {
-                    self?.scheduleSync(immediate: true)
+                    self?.scheduleSync(immediate: true, showProgress: false)
                 }
             }
             .store(in: &cancellables)
         
         // 监听偏好配置变更事件
         NotificationCenter.default.publisher(for: .preferencesChanged)
-            .sink { [weak self] _ in self?.scheduleSync(immediate: true) }
+            .sink { [weak self] _ in self?.scheduleSync(immediate: true, showProgress: false) }
             .store(in: &cancellables)
     }
 }

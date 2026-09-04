@@ -44,17 +44,19 @@ public struct IslandIconCell: View {
 
     private var loadedImage: NSImage? {
         if case .loaded(let image) = state { return image }
-        return nil
+        return IconResolver.shared.image(for: item)
     }
 
     /// 占位态是否弱化显示（failed 比 pending 更弱，暗示该项不可用）
     private var isFailed: Bool {
+        if loadedImage != nil { return false }
         if case .failed = state { return true }
         return false
     }
 
     /// 是否处于首次捕获进行中（脉动动画的触发条件）
     private var isPending: Bool {
+        if loadedImage != nil { return false }
         if case .pending = state { return true }
         return false
     }

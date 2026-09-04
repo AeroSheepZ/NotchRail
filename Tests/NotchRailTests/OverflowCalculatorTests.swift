@@ -107,13 +107,13 @@ final class OverflowCalculatorTests: XCTestCase {
             processIdentifier: 601,
             bundleIdentifier: "com.border.exact",
             title: "BorderExact",
-            nativeFrame: CGRect(x: 836, y: 955, width: 30, height: 24)
+            nativeFrame: CGRect(x: 860, y: 955, width: 30, height: 24)
         )
         let justInsideNotchItem = MenuBarItem(
             processIdentifier: 602,
             bundleIdentifier: "com.border.inside",
             title: "BorderInside",
-            nativeFrame: CGRect(x: 835.5, y: 955, width: 30, height: 24)
+            nativeFrame: CGRect(x: 859.5, y: 955, width: 30, height: 24)
         )
         let borderSnapshot = OverflowCalculator.resolve(items: [exactBorderItem, justInsideNotchItem], geometry: mockGeometry)
         XCTAssertEqual(borderSnapshot.visibleItems.count, 1)

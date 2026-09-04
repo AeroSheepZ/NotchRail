@@ -3,8 +3,8 @@ import CoreGraphics
 
 /// 负责根据屏幕几何与刘海位置判定菜单栏溢出项的纯函数计算器
 public enum OverflowCalculator {
-    /// 刘海右侧圆角过渡区安全容差（pt）
-    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 12.0
+    /// 刘海右侧圆角过渡区安全容差（pt，适配 MacBook 物理刘海圆角与系统内衬安全边界）
+    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 24.0
     /// 屏幕边缘溢出容差（pt）
     public static let SCREEN_EDGE_TOLERANCE: CGFloat = 5.0
     

@@ -53,9 +53,14 @@ public final class MouseMonitor: ObservableObject {
             }
         }
         
-        // 4. 监听前台活动应用程序切换通知（Key Window 屏幕变化）
+        // 4. 监听前台活动应用程序切换通知（Key Window 屏幕变化，排除自身获焦）
+        let ownPID = ProcessInfo.processInfo.processIdentifier
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)
-            .sink { [weak self] _ in
+            .sink { [weak self] notif in
+                if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                   app.processIdentifier == ownPID {
+                    return
+                }
                 self?.syncActiveScreen()
             }
             .store(in: &cancellables)

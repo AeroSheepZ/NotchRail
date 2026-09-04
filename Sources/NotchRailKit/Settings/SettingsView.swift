@@ -12,6 +12,7 @@ public struct SettingsView: View {
     @State private var searchText: String = ""
     @State private var showResetAlert: Bool = false
     @State private var isRefreshingPermissions: Bool = false
+    @State private var selectedDisplayID: CGDirectDisplayID? = nil
     
     public init() {}
     
@@ -256,10 +257,31 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
     
-    // MARK: - Tab 3: 应用管理 (Apps)
+    private var activeDisplayID: CGDirectDisplayID {
+        let allGeoms = ScreenManager.shared.allGeometries
+        if let selected = selectedDisplayID, allGeoms.contains(where: { $0.displayID == selected }) {
+            return selected
+        }
+        let prefs = preferenceStore.preferences
+        return ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode).displayID
+    }
     
     private var appsTab: some View {
         VStack(spacing: 10) {
+            // 0. 多显示器分段切换选择器（多屏连接时支持手动切换查看，解耦鼠标跨屏导致的数据源抖动）
+            let allScreens = ScreenManager.shared.allGeometries
+            if allScreens.count > 1 {
+                Picker("显示器", selection: Binding(
+                    get: { activeDisplayID },
+                    set: { selectedDisplayID = $0 }
+                )) {
+                    ForEach(allScreens, id: \.displayID) { geom in
+                        Text(geom.displayName).tag(geom.displayID)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            
             // 1. 顶部现代化搜索与统计栏
             HStack(spacing: 10) {
                 HStack(spacing: 6) {
@@ -418,13 +440,8 @@ public struct SettingsView: View {
         let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
         let title = item.title ?? bundleID
         
-        // 从 IconResolver 获取当前窗口捕获的真实菜单栏状态图标
-        let statusImage: NSImage? = {
-            if case .loaded(let img) = IconResolver.shared.iconStates[item.iconCacheKey] {
-                return img
-            }
-            return nil
-        }()
+        // 从 IconResolver 获取当前窗口捕获的真实菜单栏状态图标（优先实时解析态，回退持久缓存）
+        let statusImage: NSImage? = IconResolver.shared.image(for: item)
         
         return AppListEntry(
             uniqueKey: "\(bundleID)_\(item.windowID)",
@@ -437,9 +454,8 @@ public struct SettingsView: View {
     }
     
     private func filteredItems() -> [AppListEntry] {
-        let prefs = preferenceStore.preferences
-        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
-        let currentSnapshot = syncCoordinator.effectiveSnapshot(for: geom.displayID)
+        let displayID = activeDisplayID
+        let currentSnapshot = syncCoordinator.effectiveSnapshot(for: displayID)
         let menuBarItems = currentSnapshot?.allItems ?? []
         var result: [AppListEntry] = []
         
@@ -596,8 +612,8 @@ public struct SettingsView: View {
                     Text("NotchRail")
                         .font(.title3.weight(.bold))
                     
-                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.6"
-                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "6"
+                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.7"
+                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "7"
                     Text("Extended Menu Bar for MacBook Notch · v\(version) (\(build))")
                         .font(.subheadline)
                         .foregroundColor(.secondary)

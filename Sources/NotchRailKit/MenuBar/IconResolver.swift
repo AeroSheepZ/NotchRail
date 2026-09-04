@@ -62,6 +62,8 @@ public final class IconResolver: ObservableObject {
 
     /// 捕获成功的图像缓存（iconCacheKey → 带真实倍率的截图）
     private var cache: [String: CapturedIcon] = [:]
+    /// 跨窗口生命周期的稳定应用图元二级缓存（persistentKey → 带真实倍率的截图）
+    private var persistentCache: [String: CapturedIcon] = [:]
     /// LRU 访问顺序（从最旧到最新）
     private var accessOrder: [String] = []
     /// 失败计数（含最后失败时间，用于冷却判定）
@@ -138,7 +140,11 @@ public final class IconResolver: ObservableObject {
         // 1. 已有内存缓存的项先置为 loaded 状态（0ms 瞬间直出，彻底杜绝空白占位）
         for item in items {
             let key = item.iconCacheKey
-            if let cached = cache[key] {
+            if let cached = cache[key] ?? persistentCache[item.persistentKey] {
+                if cache[key] == nil {
+                    cache[key] = cached
+                    touchAccessOrder(for: key)
+                }
                 iconStates[key] = .loaded(cached.nsImage)
             }
         }
@@ -186,23 +192,48 @@ public final class IconResolver: ObservableObject {
                 }()
                 if !CapturedIcon.isVisuallyEqual(cache[key], icon) || !isAlreadyLoaded {
                     cache[key] = icon
+                    persistentCache[item.persistentKey] = icon
                     iconStates[key] = .loaded(icon.nsImage)
                     touchAccessOrder(for: key)
                     statesChanged = true
                 }
                 // 捕获成功 → 重置失败计数
                 failedCaptures.removeValue(forKey: key)
+                failedCaptures.removeValue(forKey: item.persistentKey)
             } else if result.failedKeys.contains(key) {
-                recordFailure(for: key)
-                if iconStates[key] == nil || iconStates[key] == .pending {
-                    iconStates[key] = .failed
-                    statesChanged = true
+                // 若该项截图失败（如处于离屏或副屏透明窗口），优先复用此前捕获成功的真实位图
+                if let fallback = persistentCache[item.persistentKey] {
+                    if cache[key] == nil {
+                        cache[key] = fallback
+                        touchAccessOrder(for: key)
+                    }
+                    if iconStates[key] == nil || iconStates[key] == .pending {
+                        iconStates[key] = .loaded(fallback.nsImage)
+                        statesChanged = true
+                    }
+                } else {
+                    recordFailure(for: key)
+                    if iconStates[key] == nil || iconStates[key] == .pending {
+                        iconStates[key] = .failed
+                        statesChanged = true
+                    }
                 }
             } else {
-                // 被黑名单冷却跳过或无有效窗口 bounds：显式标记为 .failed 静态弱化态，绝不悬空为 nil/pending
-                if iconStates[key] == nil || iconStates[key] == .pending {
-                    iconStates[key] = .failed
-                    statesChanged = true
+                // 被黑名单冷却跳过或无有效窗口 bounds：优先复用真实持久缓存，绝不轻易回退至空白占位
+                if let fallback = persistentCache[item.persistentKey] {
+                    if cache[key] == nil {
+                        cache[key] = fallback
+                        touchAccessOrder(for: key)
+                    }
+                    if iconStates[key] == nil || iconStates[key] == .pending {
+                        iconStates[key] = .loaded(fallback.nsImage)
+                        statesChanged = true
+                    }
+                } else {
+                    if iconStates[key] == nil || iconStates[key] == .pending {
+                        iconStates[key] = .failed
+                        statesChanged = true
+                    }
                 }
             }
         }
@@ -337,11 +368,26 @@ public final class IconResolver: ObservableObject {
         return Self.PLAUSIBLE_BACKING_SCALES.first { abs(derived - $0) <= 0.35 }
     }
 
-    // MARK: - 调试
+    // MARK: - 查询与调试
+
+    /// 获取菜单栏项的最佳真实位图（优先实时解析态，回退窗口级缓存，最后回退跨周期持久缓存）
+    public func image(for item: MenuBarItem) -> NSImage? {
+        if case .loaded(let img) = iconStates[item.iconCacheKey] {
+            return img
+        }
+        if let cached = cache[item.iconCacheKey] {
+            return cached.nsImage
+        }
+        if let persistent = persistentCache[item.persistentKey] {
+            return persistent.nsImage
+        }
+        return nil
+    }
 
     /// 清空内存缓存（偏好设置变更时调用）
     public func clearCache() {
         cache.removeAll()
+        persistentCache.removeAll()
         accessOrder.removeAll()
         failedCaptures.removeAll()
         iconStates.removeAll()

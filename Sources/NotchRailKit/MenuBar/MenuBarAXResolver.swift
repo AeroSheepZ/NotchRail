@@ -101,6 +101,8 @@ public actor MenuBarAXResolver {
         for app in apps {
             let pid = app.processIdentifier
             guard pid != ownPID, !app.isTerminated else { continue }
+            // 过滤无 UI 交互能力的后台守护服务（.prohibited 绝无菜单栏 Extra，直接跳过）
+            guard app.activationPolicy != .prohibited else { continue }
             
             // 过滤已知高延迟子进程 (AGENTS.md 3.4)
             if let bundleID = app.bundleIdentifier?.lowercased() {
@@ -113,7 +115,7 @@ public actor MenuBarAXResolver {
             }
 
             let element = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(element, 0.05)
+            AXUIElementSetMessagingTimeout(element, 0.03)
             var extras: CFTypeRef?
             if AXUIElementCopyAttributeValue(element, "AXExtrasMenuBar" as CFString, &extras) == .success,
                let extrasElem = extras,

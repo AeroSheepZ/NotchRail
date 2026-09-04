@@ -60,9 +60,14 @@ public final class ScreenManager: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // 监听前台应用切换（全屏应用与普通应用前后台切换）
+        // 监听前台应用切换（全屏应用与普通应用前后台切换，排除自身获焦）
+        let ownPID = ProcessInfo.processInfo.processIdentifier
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)
-            .sink { [weak self] _ in
+            .sink { [weak self] notif in
+                if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                   app.processIdentifier == ownPID {
+                    return
+                }
                 self?.handleSpaceOrActiveAppChanged()
             }
             .store(in: &cancellables)
