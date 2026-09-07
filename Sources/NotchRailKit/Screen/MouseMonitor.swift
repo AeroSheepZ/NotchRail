@@ -120,10 +120,11 @@ public final class MouseMonitor: ObservableObject {
     /// 处理鼠标移动：全屏顶边缘唤醒 + 外接平直屏中央 240pt 热区 120ms 防抖 + 硬件级穿透判定
     func handleMouseMove(at location: CGPoint) {
         let prefs = PreferenceStore.shared.preferences
-        let geom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
-        
-        // 仅当鼠标位于当前灵动岛所在的屏幕物理区域时进行判定，绝不随鼠标移动乱切屏
-        guard NSMouseInRect(location, geom.screenFrame, false) else {
+        // 动态解析光标当前所在的物理显示器几何（带 2pt 屏幕外沿容差，确保碰顶热区光标不被丢弃，AGENTS.md 2.1）
+        let screenMatch = ScreenManager.shared.allGeometries.first(where: {
+            $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
+        })
+        guard let geom = screenMatch ?? ScreenManager.shared.geometry(for: ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode).displayID) else {
             cancelExternalDwellTimer()
             return
         }
@@ -193,8 +194,43 @@ public final class MouseMonitor: ObservableObject {
                 }
             }
             
+            // 2. 已展开态：根据光标是否在展开区域内控制穿透与离开收起
             if isExpanded {
-                IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+                let screenRect = geom.dynamicExtendedBounds(for: overflowCount)
+                let interactiveRect = CGRect(
+                    x: screenRect.minX - 12.0,
+                    y: screenRect.minY - 12.0,
+                    width: screenRect.width + 24.0,
+                    height: screenRect.height + 17.0
+                )
+                let isInside = NSMouseInRect(location, interactiveRect, false)
+                
+                if isInside {
+                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+                    fullScreenGraceTimer?.invalidate()
+                    fullScreenGraceTimer = nil
+                } else {
+                    if geom.isFullScreenSpace {
+                        if fullScreenGraceTimer == nil {
+                            let delay = max(0.1, prefs.collapseDelayMs / 1000.0)
+                            fullScreenGraceTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+                                Task { @MainActor in
+                                    guard let self = self else { return }
+                                    self.isAwakenedInFullScreen = false
+                                    self.fullScreenGraceTimer = nil
+                                    IslandStateMachine.shared.triggerCollapse()
+                                    IslandStateMachine.shared.enterFullScreenHidden()
+                                    IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+                                }
+                            }
+                        }
+                    } else {
+                        if prefs.triggerMode != .click {
+                            IslandStateMachine.shared.handleMouseLeave()
+                        }
+                    }
+                }
                 return
             }
             
@@ -217,8 +253,8 @@ public final class MouseMonitor: ObservableObject {
         // 分流 B: 外接平直显示器 (!geom.hasPhysicalNotch)
         // -------------------------------------------------------------
         
-        // 1. 0 溢出硬门禁：当 overflowCount == 0 时，中央碰顶热区完全静默，100% 物理直通底层应用 (Ticket #44)
-        if overflowCount == 0 {
+        // 1. 无溢出隐藏判定：仅当用户开启「无溢出时自动隐藏」且 overflowCount == 0 时，中央碰顶热区才完全静默 (对齐用户偏好)
+        if prefs.hideWhenNoOverflow && overflowCount == 0 {
             cancelExternalDwellTimer()
             if isAwakenedInFullScreen {
                 isAwakenedInFullScreen = false
@@ -281,15 +317,15 @@ public final class MouseMonitor: ObservableObject {
         // 4. 判定当前光标是否处于外接屏目标中央热区（复用统一判定函数）
         let isInTargetHotZone = isPointInExternalTopZone(location, geometry: geom)
         
-        // 显式校验高速纵向穿越速度 (SPEC Decision 4: > 300pt/s 纵向穿透时取消定时器，杜绝误触)
+        // 显式校验高速纵向穿越速度 (SPEC Decision 4: 仅向下高速穿透 > 300pt/s 时取消定时器，杜绝自上向下跨屏误触)
         let now = Date().timeIntervalSinceReferenceDate
         var isHighVelocityPass = false
         if let lastLoc = lastMouseLocation, let lastTime = lastMouseTimestamp {
             let dt = now - lastTime
             if dt > 0.001 && dt < 0.25 {
-                let dy = abs(location.y - lastLoc.y)
-                let speedY = dy / CGFloat(dt)
-                if speedY > 300.0 {
+                let isDownward = (location.y - lastLoc.y) < -5.0
+                let speedY = abs(location.y - lastLoc.y) / CGFloat(dt)
+                if isDownward && speedY > 300.0 {
                     isHighVelocityPass = true
                 }
             }
@@ -297,28 +333,35 @@ public final class MouseMonitor: ObservableObject {
         self.lastMouseLocation = location
         self.lastMouseTimestamp = now
         
-        // 5. 120ms 停留意图防抖门禁
-        if isInTargetHotZone && !isHighVelocityPass {
+        // 5. 停留意图防抖门禁（对齐 triggerMode 与 hoverExpandDuration）
+        // 仅在 hover 或 hoverAndClick 模式下响应悬停防抖；click 模式留给 handleClick
+        let allowsHoverTrigger = (prefs.triggerMode == .hover || prefs.triggerMode == .hoverAndClick)
+        let dwellDuration = max(0.08, prefs.hoverExpandDuration)
+        
+        if isInTargetHotZone && !isHighVelocityPass && allowsHoverTrigger {
             if externalDwellTimer == nil {
-                externalDwellTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
+                externalDwellTimer = Timer.scheduledTimer(withTimeInterval: dwellDuration, repeats: false) { [weak self] _ in
                     Task { @MainActor in
                         guard let self = self else { return }
                         self.externalDwellTimer = nil
                         
-                        let currentGeom = ScreenManager.shared.effectiveGeometry(for: PreferenceStore.shared.preferences.externalDisplayMode)
-                        guard currentGeom.displayID == geom.displayID,
-                              !currentGeom.hasPhysicalNotch,
+                        if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
+                            ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+                        }
+                        
+                        let currentGeom = ScreenManager.shared.geometry(for: geom.displayID) ?? geom
+                        guard !currentGeom.hasPhysicalNotch,
                               !IslandStateMachine.shared.currentState.isExpanded else { return }
                         
                         let currentSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: currentGeom.displayID)
                         let currentOverflow = currentSnapshot?.overflowCount ?? 0
-                        guard currentOverflow > 0 else { return }
+                        if prefs.hideWhenNoOverflow && currentOverflow == 0 { return }
                         
                         let mousePos = NSEvent.mouseLocation
                         let stillInZone = self.isPointInExternalTopZone(mousePos, geometry: currentGeom)
                         guard stillInZone else { return }
                         
-                        // 停留意图确立：驱动状态机触发展开并更新窗口穿透
+                        // 停留意图确立：驱动状态机展开并刷新视口
                         if currentGeom.isFullScreenSpace {
                             self.isAwakenedInFullScreen = true
                         }
@@ -338,6 +381,31 @@ public final class MouseMonitor: ObservableObject {
     func handleClick(at location: CGPoint) {
         // 1. 若当前灵动岛处于展开态，委托视口管理器判定并驱动收起外部点击 (Ticket #48, 消除 Feature Envy)
         IslandWindowCoordinator.shared.handleOutsideClickIfNeeded(at: location)
+        
+        // 2. 对齐 triggerMode：若配置了 click 或 hoverAndClick 模式，且点击在外接平直屏顶部中央热区，即时展开
+        let prefs = PreferenceStore.shared.preferences
+        if !IslandStateMachine.shared.currentState.isExpanded &&
+           (prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick) {
+            let screenMatch = ScreenManager.shared.allGeometries.first(where: {
+                $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
+            })
+            if let geom = screenMatch, !geom.hasPhysicalNotch {
+                let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
+                let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
+                if !shouldSuppress && isPointInExternalTopZone(location, geometry: geom) {
+                    if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
+                        ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+                    }
+                    if geom.isFullScreenSpace {
+                        self.isAwakenedInFullScreen = true
+                    }
+                    IslandStateMachine.shared.triggerExpand(overflowCount: count)
+                    IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+                    return
+                }
+            }
+        }
         
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return }

@@ -23,23 +23,26 @@ public struct IslandRootView: View {
         
         // 动态尺寸与耳翼计算
         let dynamicCompactBounds = geometry.dynamicCompactBounds(for: overflowItems.count, isSyncing: isSyncing)
-        let compactWidth = dynamicCompactBounds.width
+        // 平直外接屏折叠态的仿真胶囊锚点宽度严格对齐原生刘海（179.0pt），彻底消除自 0 宽形变的僵硬撕裂感
+        let compactWidth: CGFloat = geometry.hasPhysicalNotch
+            ? dynamicCompactBounds.width
+            : 179.0
         let compactHeight = geometry.statusBarHeight
         let dynamicWidth = geometry.dynamicExtendedBounds(for: max(1, overflowItems.count), isSyncing: isSyncing).width
         
         let currentWidth = isExpanded ? dynamicWidth : compactWidth
         let currentHeight = isExpanded ? IslandTheme.Dimension.EXTENDED_HEIGHT : compactHeight
         let currentCornerRadius: CGFloat = isExpanded
-            ? (geometry.hasPhysicalNotch ? IslandTheme.CornerRadius.EXTENDED_BOTTOM : IslandTheme.CornerRadius.SHELF_BOTTOM)
+            ? IslandTheme.CornerRadius.EXTENDED_BOTTOM
             : IslandTheme.CornerRadius.COMPACT_BOTTOM
         
         // 计算紧凑态相对刘海中心的水平偏移（左耳翼向左延展，底座永不偏移摄像头）
-        let leftWing = isExpanded ? 0.0 : IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: isSyncing)
+        let leftWing = isExpanded ? 0.0 : (geometry.hasPhysicalNotch ? IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: isSyncing) : 0.0)
         let horizontalOffset = -leftWing / 2.0
         
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // 1. 硬件级连续变形底座（物理刘海吸光底座 / 平直浮轨消耳毛玻璃 HUD）
+                // 1. 硬件级连续变形底座（纯黑吸光底座 + 顶部外展喇叭口）
                 IslandBackground(
                     cornerRadius: currentCornerRadius,
                     hasPhysicalNotch: geometry.hasPhysicalNotch
@@ -109,7 +112,13 @@ public struct IslandRootView: View {
             .offset(x: horizontalOffset)
             .animation(IslandTheme.Animation.FLUID_SPRING, value: currentWidth)
             .animation(IslandTheme.Animation.FLUID_SPRING, value: currentHeight)
+            .animation(IslandTheme.Animation.FLUID_SPRING, value: currentCornerRadius)
             .animation(IslandTheme.Animation.FLUID_SPRING, value: horizontalOffset)
+            .opacity(geometry.hasPhysicalNotch || isExpanded ? 1.0 : 0.0)
+            .animation(
+                geometry.hasPhysicalNotch ? nil : (isExpanded ? .easeOut(duration: 0.15) : .easeInOut(duration: 0.28)),
+                value: isExpanded
+            )
             .contentShape(Rectangle())
             .onHover { isHovered in
                 handleHover(isHovered, overflowCount: overflowItems.count, isSyncing: isSyncing)
@@ -119,7 +128,6 @@ public struct IslandRootView: View {
                     handleTap(overflowCount: overflowItems.count, isSyncing: isSyncing)
                 }
             )
-            .id(geometry.displayID)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -142,12 +150,10 @@ public struct IslandRootView: View {
     private func handleTap(overflowCount: Int, isSyncing: Bool) {
         guard !isSyncing else { return }
         let prefs = preferenceStore.preferences
-        // 允许 click 与 hoverAndClick 模式触发点击即时展开/收起
+        // 允许 click 与 hoverAndClick 模式触发紧凑胶囊点击即时展开（展开态由外部点击或图标点击独立处理，避免劫持图标手势）
         guard prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick else { return }
         
-        if IslandStateMachine.shared.currentState.isExpanded {
-            IslandStateMachine.shared.triggerCollapse()
-        } else {
+        if !IslandStateMachine.shared.currentState.isExpanded {
             IslandStateMachine.shared.triggerExpand(overflowCount: overflowCount)
         }
     }

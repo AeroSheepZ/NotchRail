@@ -116,12 +116,19 @@ final class MouseMonitorTests: XCTestCase {
         let farRightClock = CGPoint(x: 2540.0, y: topY - 1.0)
         XCTAssertFalse(geom.isPointInExternalCenterHotZone(farRightClock))
         
-        // 4. 垂直阈值防误触：距离顶边缘 > 4pt (如 1435.0 < 1436.0) 严格不命中
-        let below4pt = CGPoint(x: midX, y: topY - 4.5)
-        XCTAssertFalse(geom.isPointInExternalCenterHotZone(below4pt))
+        // 4. 垂直阈值判定：覆盖状态栏高度（topY - 10.0）命中，超出状态栏高度（topY - 25.0 < 1416.0）及屏幕中央严格不命中
+        let withinStatusBar = CGPoint(x: midX, y: topY - 10.0)
+        XCTAssertTrue(geom.isPointInExternalCenterHotZone(withinStatusBar))
+        
+        let belowStatusBar = CGPoint(x: midX, y: topY - 25.0)
+        XCTAssertFalse(geom.isPointInExternalCenterHotZone(belowStatusBar))
         
         let middleScreen = CGPoint(x: midX, y: 720.0)
         XCTAssertFalse(geom.isPointInExternalCenterHotZone(middleScreen))
+        
+        // 显式传入自定义 4pt 阈值时，距离顶边缘 > 4pt 严格不命中
+        let below4pt = CGPoint(x: midX, y: topY - 4.5)
+        XCTAssertFalse(geom.isPointInExternalCenterHotZone(below4pt, verticalThreshold: 4.0))
     }
     
     func testMultiDisplayOffsetExternalCenterHotZone() {
@@ -209,9 +216,9 @@ final class MouseMonitorTests: XCTestCase {
         let topY = screen.frame.maxY
         let midX = screen.frame.midX
         
-        // 当 0 溢出时，即使光标持续碰触中央热区，也严格保持定时器未激活
+        // 当 hideWhenNoOverflow 为 true 且 0 溢出时，中央热区严格保持定时器未激活
+        PreferenceStore.shared.update { $0.hideWhenNoOverflow = true }
         monitor.simulateMouseMove(at: CGPoint(x: midX, y: topY - 1.0))
-        // 默认屏幕没有模拟溢出时 overflowCount 为 0
         let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: screen.displayID)
         if targetSnapshot == nil || targetSnapshot?.overflowCount == 0 {
             XCTAssertFalse(monitor.isExternalDwellTimerActive)
@@ -220,6 +227,9 @@ final class MouseMonitorTests: XCTestCase {
         // 移出屏幕范围时，定时器自动清理
         monitor.simulateMouseMove(at: CGPoint(x: -100, y: -100))
         XCTAssertFalse(monitor.isExternalDwellTimerActive)
+        
+        // 恢复默认偏好
+        PreferenceStore.shared.update { $0.hideWhenNoOverflow = false }
     }
     
     // MARK: - Ticket #48: 点击外部即时收起 (Dismiss on Click Outside) 与穿透断言
@@ -284,15 +294,13 @@ final class MouseMonitorTests: XCTestCase {
         stateMachine.triggerCollapse()
     }
     
-    func testViewportLeasingSmoothReturnOnCollapse() {
+    func testFocusFollowingExpandCollapseCycle() {
         let coordinator = IslandWindowCoordinator.shared
         let stateMachine = IslandStateMachine.shared
         coordinator.start()
         
-        // 验证初始常态未借调
-        let primary = ScreenManager.shared.primaryGeometry
-        XCTAssertFalse(coordinator.isLeasedToExternal)
-        XCTAssertEqual(coordinator.currentPanelGeometry.displayID, primary.displayID)
+        let effective = ScreenManager.shared.effectiveGeometry(for: PreferenceStore.shared.preferences.externalDisplayMode)
+        XCTAssertEqual(coordinator.currentPanelGeometry.displayID, effective.displayID)
         
         // 展开与收起周期验证
         stateMachine.triggerExpand(overflowCount: 3)

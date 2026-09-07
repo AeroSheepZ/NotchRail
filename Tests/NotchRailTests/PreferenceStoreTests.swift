@@ -10,7 +10,7 @@ final class PreferenceStoreTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         
         let store = PreferenceStore(userDefaults: defaults)
-        XCTAssertEqual(store.preferences.triggerMode, .hover)
+        XCTAssertEqual(store.preferences.triggerMode, .hoverAndClick)
         XCTAssertEqual(store.preferences.externalDisplayMode, .followFocusedScreen)
         XCTAssertTrue(store.preferences.autoCollapseOnClick)
         XCTAssertTrue(store.preferences.enableHapticFeedback)
@@ -56,7 +56,7 @@ final class PreferenceStoreTests: XCTestCase {
         XCTAssertEqual(decoded.collapseDelayMs, 250.0)
         XCTAssertTrue(decoded.launchAtLogin)
         // 验证自动补充的安全默认值
-        XCTAssertEqual(decoded.triggerMode, .hover)
+        XCTAssertEqual(decoded.triggerMode, .hoverAndClick)
         XCTAssertEqual(decoded.externalDisplayMode, .followFocusedScreen)
         XCTAssertTrue(decoded.autoCollapseOnClick)
         XCTAssertTrue(decoded.enableHapticFeedback)
@@ -82,7 +82,7 @@ final class PreferenceStoreTests: XCTestCase {
         
         store.resetToDefaults()
         
-        XCTAssertEqual(store.preferences.triggerMode, .hover)
+        XCTAssertEqual(store.preferences.triggerMode, .hoverAndClick)
         XCTAssertEqual(store.preferences.externalDisplayMode, .followFocusedScreen)
         XCTAssertTrue(store.preferences.ignoredBundleIDs.isEmpty)
         XCTAssertEqual(store.preferences.hoverExpandDelayMs, IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0)

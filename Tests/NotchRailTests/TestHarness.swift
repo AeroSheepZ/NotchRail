@@ -1,3 +1,6 @@
+#if canImport(XCTest)
+import XCTest
+#else
 import Foundation
 
 public func XCTAssertEqual<T: Equatable>(_ a: T, _ b: T, _ message: String = "", file: StaticString = #file, line: UInt = #line) {
@@ -29,4 +32,5 @@ open class XCTestCase {
     open func setUp() {}
     open func tearDown() {}
 }
+#endif
 

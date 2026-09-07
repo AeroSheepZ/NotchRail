@@ -208,7 +208,7 @@ final class ScreenManagerTests: XCTestCase {
     
     // MARK: - Ticket #46: 视口借调流转与合盖模式单一真实来源测试
     
-    func testViewportLeasingCoordinatorContract() {
+    func testFocusFollowingCoordinatorContract() {
         let coordinator = IslandWindowCoordinator.shared
         coordinator.start()
         
@@ -216,20 +216,18 @@ final class ScreenManagerTests: XCTestCase {
         XCTAssertGreaterThan(panelGeom.screenFrame.width, 0)
         XCTAssertGreaterThan(panelGeom.screenFrame.height, 0)
         
-        // 常态未展开时，确认未借调
-        if !IslandStateMachine.shared.currentState.isExpanded {
-            XCTAssertFalse(coordinator.isLeasedToExternal)
-        }
+        let effectiveGeom = ScreenManager.shared.effectiveGeometry(for: PreferenceStore.shared.preferences.externalDisplayMode)
+        XCTAssertEqual(panelGeom.displayID, effectiveGeom.displayID)
     }
     
     // MARK: - Ticket #47: 平直浮轨消耳、24pt 圆角与 HUD Hit-Test 穿透测试
     
     func testFloatingShelfStylingAndHitTest() {
-        // 1. 浮轨圆角与阴影 Tokens
+        // 1. 浮轨圆角与阴影 Tokens (SPEC Decision 6 & IslandTheme)
         XCTAssertEqual(IslandTheme.CornerRadius.SHELF_BOTTOM, 24.0)
-        XCTAssertEqual(IslandTheme.Shadow.RADIUS, 16.0)
+        XCTAssertEqual(IslandTheme.Shadow.RADIUS, 12.0)
         XCTAssertEqual(IslandTheme.Shadow.X, 0.0)
-        XCTAssertEqual(IslandTheme.Shadow.Y, 8.0)
+        XCTAssertEqual(IslandTheme.Shadow.Y, 4.0)
         
         // 2. 消耳吸顶形状边界验证
         let shelfRect = CGRect(x: 0, y: 0, width: 600, height: 84)

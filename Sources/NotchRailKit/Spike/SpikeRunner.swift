@@ -350,12 +350,12 @@ public enum SpikeRunner {
         check(clickSM.currentState == .extended, "Test 12: toggleExpandCollapse should expand")
         clickSM.toggleExpandCollapse()
         check(clickSM.currentState == .compact, "Test 12: toggleExpandCollapse should collapse")
-        PreferenceStore.shared.update { $0.triggerMode = .hover }
+        PreferenceStore.shared.update { $0.triggerMode = .hoverAndClick }
         print("   ✅ Case 12 通过: IslandStateMachine 多模式触发 (Click-Only & Hover) 隔离验证通过")
         
         // Test 13: PreferenceStore 0.0.3 Defaults & Reset
         testStore.resetToDefaults()
-        check(testStore.preferences.triggerMode == .hover, "Test 13: Reset triggerMode mismatch")
+        check(testStore.preferences.triggerMode == .hoverAndClick, "Test 13: Reset triggerMode mismatch")
         check(testStore.preferences.externalDisplayMode == .followFocusedScreen, "Test 13: Reset externalDisplayMode mismatch")
         check(testStore.preferences.autoCollapseOnClick == true, "Test 13: Reset autoCollapseOnClick mismatch")
         check(testStore.preferences.enableHapticFeedback == true, "Test 13: Reset enableHapticFeedback mismatch")
@@ -433,15 +433,14 @@ public enum SpikeRunner {
         check(outSnapshot.overflowItems.count == 2, "Test 17: Out of bounds items must be marked as overflowed")
         print("   ✅ Case 17 通过: 屏幕边缘越界项 (超右界 / 超左界) 纯几何溢出判定通过")
         
-        // Test 18: 视口借调流转架构 (Viewport Leasing) 与单一可信源契约 (Ticket #46)
+        // Test 18: 多屏聚焦跟随与单一可信源契约
         let coordinator = IslandWindowCoordinator.shared
         coordinator.start()
         let panelGeom = coordinator.currentPanelGeometry
         check(panelGeom.screenFrame.width > 0 && panelGeom.screenFrame.height > 0, "Test 18: currentPanelGeometry must be valid")
-        if !IslandStateMachine.shared.currentState.isExpanded {
-            check(!coordinator.isLeasedToExternal, "Test 18: Default unexpanded state must not be leased")
-        }
-        print("   ✅ Case 18 通过: 视口借调流转架构 (Viewport Leasing) 与合盖模式单一可信源契约通过")
+        let effectiveGeom = ScreenManager.shared.effectiveGeometry(for: PreferenceStore.shared.preferences.externalDisplayMode)
+        check(panelGeom.displayID == effectiveGeom.displayID, "Test 18: currentPanelGeometry must match effectiveGeometry")
+        print("   ✅ Case 18 通过: 多屏聚焦跟随与单一可信源契约通过")
         
         // Test 19: 平直悬浮浮轨 (Floating Shelf) 消耳平直贴顶与 HUD 质感契约 (SPEC Decision 6)
         check(IslandTheme.CornerRadius.SHELF_BOTTOM == 24.0, "Test 19: SHELF_BOTTOM must be 24.0")

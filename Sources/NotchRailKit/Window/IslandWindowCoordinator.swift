@@ -3,12 +3,11 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// 协调 IslandPanel 窗口的创建、布局锚定与显示隐藏及跨屏动态迁移
-/// 落实视口借调流转架构（Viewport Leasing）与合盖模式（Clamshell）支持：
-/// 1. 常态守护：若存在物理刘海屏，单例 Panel 的物理 Frame 始终锚定在 MacBook 物理刘海屏（primaryGeometry），维持物理刘海处小胶囊与黄色耳翼常驻显示；
-/// 2. 展开借调：当外接平直屏产生展开意图（isExpanded == true 且目标屏为外接屏）时，Panel 物理 Frame 原子迁移至外接屏顶部中央，并平滑淡入展开；
-/// 3. 收起归位：当外接屏展开面板收起（动画结束退回未展开隐形态）后，Panel 物理 Frame 立即无感重置归位回 MacBook 物理刘海屏（primaryGeometry），无缝恢复常驻小胶囊；
-/// 4. 合盖模式：若全系统所有屏幕均无物理刘海，Panel 驻留主外接屏且平时透明（alpha = 0.0，ignoresMouseEvents = true），按需就地展开。
+/// 协调 IslandPanel 窗口的创建、布局锚定与显示隐藏及多屏动态迁移
+/// 采用黄金吸顶视口架构 + 聚焦跟随体系：
+/// 1. 视口层：窗口在当前目标屏幕顶部保持稳固常驻（高度为 EXTENDED_HEIGHT 84pt），展开/收起绝不改变原生窗口 Frame；
+/// 2. 聚焦跟随：窗口严格根据用户激活的焦点屏幕迁移，单例 Panel 在各屏之间自然流转；
+/// 3. 平直屏规范：外接平直显示器在折叠常态下 100% 隐形透明（alpha = 0.0）且鼠标 100% 物理直通，展开时原位呈现纯黑仿真灵动岛。
 @MainActor
 public final class IslandWindowCoordinator: ObservableObject {
     public static let shared = IslandWindowCoordinator()
@@ -19,10 +18,6 @@ public final class IslandWindowCoordinator: ObservableObject {
     
     /// 当前 Panel 实际锚定的屏幕几何（单一可信数据源，驱动 IslandHostingView 与 IslandRootView）
     @Published public private(set) var currentPanelGeometry: NotchGeometry
-    /// 视口当前是否处于借调给外接平直屏展开状态
-    public private(set) var isLeasedToExternal: Bool = false
-    /// 外接屏收起后归位到物理刘海屏的延迟工作项
-    private var returnToPrimaryWorkItem: DispatchWorkItem?
     
     private init() {
         let initialGeom = ScreenManager.shared.primaryGeometry
@@ -73,10 +68,8 @@ public final class IslandWindowCoordinator: ObservableObject {
     public func start() {
         if panel != nil { return }
         
-        let allGeoms = ScreenManager.shared.allGeometries
-        let hasAnyPhysicalNotch = allGeoms.contains(where: { $0.hasPhysicalNotch })
         let prefs = PreferenceStore.shared.preferences
-        let geometry = hasAnyPhysicalNotch ? ScreenManager.shared.primaryGeometry : ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
+        let geometry = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
         self.currentPanelGeometry = geometry
         let viewportBounds = calculateViewportBounds(for: geometry)
         
@@ -118,160 +111,71 @@ public final class IslandWindowCoordinator: ObservableObject {
         return CGRect(x: viewportX, y: viewportY, width: viewportWidth, height: viewportHeight)
     }
     
-    /// 综合应用视口借调流转架构、多显示器策略与合盖模式
+    /// 综合应用多显示器聚焦跟随策略、0 溢出自动隐藏与平直外接屏常态隐形规则
     public func applyDisplayAndVisibilityRules() {
         guard let panel = self.panel else { return }
         
         let prefs = PreferenceStore.shared.preferences
-        let allGeoms = ScreenManager.shared.allGeometries
-        let hasAnyPhysicalNotch = allGeoms.contains(where: { $0.hasPhysicalNotch })
-        let primaryGeom = ScreenManager.shared.primaryGeometry
         let currentGeom = ScreenManager.shared.currentGeometry
-        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        let mainGeom = ScreenManager.shared.primaryGeometry
         
-        // =========================================================================
-        // 分支 1: 合盖模式（Clamshell 无刘海屏场景）：全系统所有屏幕均无物理刘海
-        // Panel 驻留主外接屏且平时透明（alpha = 0.0，ignoresMouseEvents = true），按需就地展开
-        // =========================================================================
-        if !hasAnyPhysicalNotch {
-            returnToPrimaryWorkItem?.cancel()
-            returnToPrimaryWorkItem = nil
-            isLeasedToExternal = false
-            
-            if prefs.externalDisplayMode == .disabled {
-                panel.ignoresMouseEvents = true
-                panel.alphaValue = 0.0
-                return
-            }
-            
-            let targetGeom = ScreenManager.shared.effectiveGeometry(for: prefs.externalDisplayMode)
-            let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: targetGeom.displayID)
-            let overflowCount = targetSnapshot?.overflowCount ?? 0
-            let hasNoOverflow = overflowCount == 0
-            let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && hasNoOverflow && !isExpanded
-            let isFullScreenHidden = IslandStateMachine.shared.currentState.isFullScreenHidden ||
-                                    (targetGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
-            let targetViewport = calculateViewportBounds(for: targetGeom)
-            
-            self.currentPanelGeometry = targetGeom
-            self.lastActiveDisplayID = targetGeom.displayID
-            
-            if !isExpanded || isFullScreenHidden || shouldHideForNoOverflow {
-                panel.ignoresMouseEvents = true
-                updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 0.0, duration: 0.20, immediate: false)
-            } else {
-                panel.ignoresMouseEvents = false
-                panel.orderFrontRegardless()
-                updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 1.0, duration: 0.18, immediate: false)
-            }
-            return
-        }
-        
-        // =========================================================================
-        // 分支 2: 存在物理刘海屏（MacBook 打开状态，单屏或多屏）：视口借调流转架构
-        // =========================================================================
-        
+        // 1. 判断多显示器策略
+        let effectiveGeom: NotchGeometry
         var shouldHideForExternal = false
+        
         switch prefs.externalDisplayMode {
         case .followFocusedScreen:
-            shouldHideForExternal = false
+            effectiveGeom = currentGeom
         case .mainScreenOnly:
-            shouldHideForExternal = false
+            effectiveGeom = mainGeom
         case .disabled:
-            shouldHideForExternal = !currentGeom.hasPhysicalNotch && !currentGeom.isBuiltIn
-        }
-        
-        // A. 展开借调：当外接平直屏产生展开意图（isExpanded == true 且目标屏为外接屏且偏好允许）
-        let canLeaseToExternal = (prefs.externalDisplayMode == .followFocusedScreen) && !currentGeom.hasPhysicalNotch && !shouldHideForExternal
-        
-        if isExpanded && canLeaseToExternal {
-            // 取消正在等待的归位定时器
-            returnToPrimaryWorkItem?.cancel()
-            returnToPrimaryWorkItem = nil
-            
-            let isNewlyLeased = !isLeasedToExternal || (currentPanelGeometry.displayID != currentGeom.displayID)
-            self.isLeasedToExternal = true
-            self.currentPanelGeometry = currentGeom
-            self.lastActiveDisplayID = currentGeom.displayID
-            
-            let targetViewport = calculateViewportBounds(for: currentGeom)
-            panel.ignoresMouseEvents = false
-            panel.orderFrontRegardless()
-            // 原子迁移至外接屏顶部中央，并平滑淡入展开
-            updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 1.0, duration: 0.18, immediate: false, preZeroAlpha: isNewlyLeased)
-            return
-        }
-        
-        // B. 收起归位：当外接屏展开面板收起（动画结束退回未展开隐形态）后，Panel 物理 Frame 立即无感重置归位回 MacBook 物理刘海屏
-        if isLeasedToExternal && !isExpanded {
-            // 外接平直屏面板先就地平滑淡出至完全隐形
-            panel.ignoresMouseEvents = true
-            let externalViewport = calculateViewportBounds(for: currentPanelGeometry)
-            updatePanelViewport(panel, targetViewport: externalViewport, targetAlpha: 0.0, duration: 0.20, immediate: false)
-            
-            // 启动归位定时器，等待外接屏退回隐形态动画结束（0.22s），立即无感归位回 primaryGeometry
-            if returnToPrimaryWorkItem == nil {
-                let workItem = DispatchWorkItem { [weak self] in
-                    guard let self = self, let panel = self.panel else { return }
-                    self.returnToPrimaryWorkItem = nil
-                    guard !IslandStateMachine.shared.currentState.isExpanded else { return }
-                    self.isLeasedToExternal = false
-                    
-                    let primaryViewport = self.calculateViewportBounds(for: primaryGeom)
-                    panel.alphaValue = 0.0
-                    panel.setFrame(primaryViewport, display: true)
-                    self.currentPanelGeometry = primaryGeom
-                    self.lastActiveDisplayID = primaryGeom.displayID
-                    
-                    // 归位后恢复 MacBook 物理刘海常驻小胶囊
-                    self.applyDisplayAndVisibilityRules()
-                }
-                self.returnToPrimaryWorkItem = workItem
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: workItem)
+            if !currentGeom.hasPhysicalNotch && !currentGeom.isBuiltIn {
+                shouldHideForExternal = true
             }
+            effectiveGeom = currentGeom
+        }
+        
+        if shouldHideForExternal {
+            panel.orderOut(nil)
             return
         }
         
-        // C. 常态（未借调）：单例 Panel 的物理 Frame 始终锚定在 MacBook 物理刘海屏（primaryGeometry），维持常驻小胶囊
-        returnToPrimaryWorkItem?.cancel()
-        returnToPrimaryWorkItem = nil
-        self.isLeasedToExternal = false
+        self.currentPanelGeometry = effectiveGeom
         
-        let targetGeom = primaryGeom
-        self.currentPanelGeometry = targetGeom
-        
-        let isScreenSwitching = (lastActiveDisplayID != nil && lastActiveDisplayID != targetGeom.displayID)
-        self.lastActiveDisplayID = targetGeom.displayID
-        
-        // 检查刘海屏全屏与快照
-        let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: targetGeom.displayID)
+        // 2. 检查目标屏幕多屏预热快照
+        let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: effectiveGeom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let hasNoOverflow = overflowCount == 0
+        let isScreenSwitching = (lastActiveDisplayID != nil && lastActiveDisplayID != effectiveGeom.displayID)
+        self.lastActiveDisplayID = effectiveGeom.displayID
         
-        // 切屏或处于未唤醒全屏空间时，原子重置展开态
-        if isScreenSwitching || (targetGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen) {
+        // 3. 切屏或处于未唤醒全屏空间时，原子重置展开态，确保到达新屏幕或全屏时处于纯净初始态
+        if isScreenSwitching || (effectiveGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen) {
             if IslandStateMachine.shared.currentState.isExpanded {
                 IslandStateMachine.shared.triggerCollapse()
             }
         }
         
-        if !targetGeom.isFullScreenSpace && IslandStateMachine.shared.currentState.isFullScreenHidden {
+        // 4. 普通桌面空间且状态机处于 fullScreenHidden 时，主动闭环唤醒恢复 compact
+        if !effectiveGeom.isFullScreenSpace && IslandStateMachine.shared.currentState.isFullScreenHidden {
             IslandStateMachine.shared.awakenFromFullScreen()
         }
         
+        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
         let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && hasNoOverflow && !isExpanded
         let isFullScreenHidden = IslandStateMachine.shared.currentState.isFullScreenHidden ||
-                                (targetGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
+                                (effectiveGeom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
         
-        let targetViewport = calculateViewportBounds(for: targetGeom)
+        // 【v0.0.8 核心规范】：平直外接屏在折叠常态下不显示紧凑态灵动岛（100% 隐形、100% 物理穿透，消除虚拟假刘海）
+        let shouldHideForFlatExternal = !effectiveGeom.hasPhysicalNotch && !isExpanded
         
-        if isFullScreenHidden || shouldHideForNoOverflow {
+        let targetViewport = calculateViewportBounds(for: effectiveGeom)
+        
+        if isFullScreenHidden || shouldHideForNoOverflow || shouldHideForFlatExternal {
             panel.ignoresMouseEvents = true
             updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 0.0, duration: 0.20, immediate: isScreenSwitching)
         } else {
-            if isExpanded {
-                panel.ignoresMouseEvents = false
-            }
+            panel.ignoresMouseEvents = false
             panel.orderFrontRegardless()
             updatePanelViewport(panel, targetViewport: targetViewport, targetAlpha: 1.0, duration: 0.18, immediate: false, preZeroAlpha: isScreenSwitching)
         }

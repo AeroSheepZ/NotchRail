@@ -23,46 +23,25 @@ public struct IslandBackground: View {
     }
     
     public var body: some View {
-        let topEar: CGFloat = hasPhysicalNotch ? IslandTheme.CornerRadius.TOP_EAR : 0.0
+        // 统一保留顶部两边标志性的外展平滑喇叭弧 (Top Ear Radius: 5.0pt)，黑仿真设计全屏统一
+        let topEar: CGFloat = IslandTheme.CornerRadius.TOP_EAR
         
         ZStack {
-            if hasPhysicalNotch {
-                // 1. 物理刘海屏：统一纯黑吸光底座（闭合填充，与硬件刘海完全融合）
-                NotchShape(bottomCornerRadius: cornerRadius, topEarRadius: topEar)
-                    .fill(IslandTheme.ColorPalette.BACKGROUND)
-                
-                // 硬件级微光渐变边缘线（侧边与底部包边发光，顶部平直开口贴屏，绝无顶边白线）
-                NotchBorderShape(bottomCornerRadius: cornerRadius, topEarRadius: topEar)
-                    .stroke(
-                        IslandTheme.Stroke.GRADIENT,
-                        style: StrokeStyle(
-                            lineWidth: IslandTheme.Stroke.LINE_WIDTH,
-                            lineCap: .round,
-                            lineJoin: .round
-                        )
+            // 统一纯黑实体仿真吸光底座（闭合填充，彻底消除灰白色半透明毛玻璃）
+            NotchShape(bottomCornerRadius: cornerRadius, topEarRadius: topEar)
+                .fill(IslandTheme.ColorPalette.BACKGROUND)
+            
+            // 硬件级微光渐变边缘线（侧边与底部发光包边，顶部平直开口贴屏，绝无顶边白线）
+            NotchBorderShape(bottomCornerRadius: cornerRadius, topEarRadius: topEar)
+                .stroke(
+                    IslandTheme.Stroke.GRADIENT,
+                    style: StrokeStyle(
+                        lineWidth: IslandTheme.Stroke.LINE_WIDTH,
+                        lineCap: .round,
+                        lineJoin: .round
                     )
-            } else {
-                // 2. 平直外接屏：macOS 原生 HUD 质感（.ultraThinMaterial / white.opacity(0.15) 纯净描边 - SPEC Decision 6）
-                NotchShape(bottomCornerRadius: cornerRadius, topEarRadius: 0.0)
-                    .fill(.ultraThinMaterial)
-                
-                NotchBorderShape(bottomCornerRadius: cornerRadius, topEarRadius: 0.0)
-                    .stroke(
-                        Color.white.opacity(0.15),
-                        style: StrokeStyle(
-                            lineWidth: IslandTheme.Stroke.LINE_WIDTH,
-                            lineCap: .round,
-                            lineJoin: .round
-                        )
-                    )
-            }
+                )
         }
-        .shadow(
-            color: hasPhysicalNotch ? .clear : IslandTheme.Shadow.COLOR,
-            radius: hasPhysicalNotch ? 0 : IslandTheme.Shadow.RADIUS,
-            x: hasPhysicalNotch ? 0 : IslandTheme.Shadow.X,
-            y: hasPhysicalNotch ? 0 : IslandTheme.Shadow.Y
-        )
     }
 }
 

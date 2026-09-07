@@ -76,12 +76,17 @@ public final class ScreenManager: ObservableObject {
     
     private var currentFocusedScreen: NSScreen?
     
+    /// 内部辅助方法：重新计算所有给定屏幕的几何数据，消除多处重复代码
+    private func recalculateAllGeometries(from screens: [NSScreen]) -> [NotchGeometry] {
+        return screens.map { ScreenManager.calculateGeometry(for: $0, appMenuRightEdge: self.appMenuRightEdgeCache[$0.displayID]) }
+    }
+    
     /// 刷新所有已连接显示器的几何数据
     public func refreshAllScreens() {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return }
         
-        self.allGeometries = screens.map { ScreenManager.calculateGeometry(for: $0, appMenuRightEdge: self.appMenuRightEdgeCache[$0.displayID]) }
+        self.allGeometries = recalculateAllGeometries(from: screens)
         
         // 重新同步当前屏幕几何
         let activeScreen = self.activeScreen()
@@ -115,13 +120,6 @@ public final class ScreenManager: ObservableObject {
         return false
     }
     
-    /// 检查并切换屏幕（兼容接口）
-    @discardableResult
-    public func updateActiveDisplayIfNeeded() -> Bool {
-        let screen = activeScreen()
-        return updateActiveFocusScreen(to: screen)
-    }
-    
     /// 解析特定屏幕的刘海几何数据
     public func resolveGeometry(for screen: NSScreen? = nil) -> NotchGeometry {
         let targetScreen = screen ?? activeScreen()
@@ -146,7 +144,7 @@ public final class ScreenManager: ObservableObject {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return }
         
-        self.allGeometries = screens.map { ScreenManager.calculateGeometry(for: $0, appMenuRightEdge: self.appMenuRightEdgeCache[$0.displayID]) }
+        self.allGeometries = recalculateAllGeometries(from: screens)
         let active = self.activeScreen()
         let updatedGeom = ScreenManager.calculateGeometry(for: active, appMenuRightEdge: self.appMenuRightEdgeCache[active.displayID])
         self.currentGeometry = updatedGeom
@@ -162,7 +160,7 @@ public final class ScreenManager: ObservableObject {
                 guard let self = self else { return }
                 let finalScreens = NSScreen.screens
                 if !finalScreens.isEmpty {
-                    self.allGeometries = finalScreens.map { ScreenManager.calculateGeometry(for: $0, appMenuRightEdge: self.appMenuRightEdgeCache[$0.displayID]) }
+                    self.allGeometries = self.recalculateAllGeometries(from: finalScreens)
                     let currentActive = self.activeScreen()
                     self.currentGeometry = ScreenManager.calculateGeometry(for: currentActive, appMenuRightEdge: self.appMenuRightEdgeCache[currentActive.displayID])
                 }
@@ -211,7 +209,7 @@ public final class ScreenManager: ObservableObject {
         }
         
         let screens = NSScreen.screens
-        self.allGeometries = screens.map { ScreenManager.calculateGeometry(for: $0, appMenuRightEdge: self.appMenuRightEdgeCache[$0.displayID]) }
+        self.allGeometries = recalculateAllGeometries(from: screens)
         
         if currentGeometry.displayID == displayID,
            let updated = self.allGeometries.first(where: { $0.displayID == displayID }) {
@@ -222,6 +220,23 @@ public final class ScreenManager: ObservableObject {
         }
     }
     
+    /// 通过 WindowServer 状态栏窗口（Layer 24）动态探测物理状态栏高度 (AGENTS.md 3.1)
+    public static func detectStatusBarHeight(for screenBounds: CGRect) -> CGFloat? {
+        let opts = CGWindowListOption([.optionOnScreenOnly, .excludeDesktopElements])
+        guard let list = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for dict in list {
+            guard let layer = dict[kCGWindowLayer as String] as? Int, layer == 24 else { continue }
+            guard let boundsDict = dict[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+            if abs(bounds.width - screenBounds.width) < 2.0 && abs(bounds.minX - screenBounds.minX) < 2.0 {
+                if bounds.height > 0 {
+                    return bounds.height
+                }
+            }
+        }
+        return nil
+    }
+
     /// 静态核心算法：计算单一屏幕的 NotchGeometry
     public static func calculateGeometry(for screen: NSScreen, appMenuRightEdge: CGFloat? = nil) -> NotchGeometry {
         let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
@@ -234,7 +249,8 @@ public final class ScreenManager: ObservableObject {
         // 判定物理刘海（macOS 12+ auxiliaryTopLeftArea / safeAreaInsets.top > 0）
         let safeAreaTop = insets.top
         let hasNotch = safeAreaTop > 0
-        let statusBarHeight: CGFloat = hasNotch ? safeAreaTop : (screenFrame.maxY - visibleFrame.maxY > 0 ? screenFrame.maxY - visibleFrame.maxY : 24.0)
+        let dynamicBarHeight = detectStatusBarHeight(for: screenFrame)
+        let statusBarHeight: CGFloat = hasNotch ? safeAreaTop : (dynamicBarHeight ?? (screenFrame.maxY - visibleFrame.maxY > 0 ? screenFrame.maxY - visibleFrame.maxY : 24.0))
         
         let notchRect: CGRect
         if hasNotch {

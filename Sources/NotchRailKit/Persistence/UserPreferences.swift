@@ -8,9 +8,9 @@ public enum TriggerMode: String, Codable, CaseIterable, Sendable {
     
     public var displayName: String {
         switch self {
-        case .hover: return "鼠标悬停（默认）"
-        case .click: return "仅点击展开"
-        case .hoverAndClick: return "悬停或点击"
+        case .hover: return "仅鼠标悬停"
+        case .click: return "仅鼠标点击"
+        case .hoverAndClick: return "悬停或点击（默认推荐）"
         }
     }
 }
@@ -66,7 +66,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     }
     
     public init(
-        triggerMode: TriggerMode = .hover,
+        triggerMode: TriggerMode = .hoverAndClick,
         autoCollapseOnClick: Bool = true,
         enableHapticFeedback: Bool = true,
         hideWhenNoOverflow: Bool = false,
@@ -93,7 +93,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.triggerMode = try container.decodeIfPresent(TriggerMode.self, forKey: .triggerMode) ?? .hover
+        self.triggerMode = try container.decodeIfPresent(TriggerMode.self, forKey: .triggerMode) ?? .hoverAndClick
         self.autoCollapseOnClick = try container.decodeIfPresent(Bool.self, forKey: .autoCollapseOnClick) ?? true
         self.enableHapticFeedback = try container.decodeIfPresent(Bool.self, forKey: .enableHapticFeedback) ?? true
         self.hideWhenNoOverflow = try container.decodeIfPresent(Bool.self, forKey: .hideWhenNoOverflow) ?? false

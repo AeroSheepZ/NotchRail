@@ -39,15 +39,15 @@ public struct SettingsView: View {
                 }
                 .tag(2)
             
-            // Tab 4: 关于与诊断
+            // Tab 4: 诊断与关于
             aboutTab
                 .tabItem {
-                    Label("关于与诊断", systemImage: "info.circle")
+                    Label("诊断与关于", systemImage: "info.circle")
                 }
                 .tag(3)
         }
         .padding(16)
-        .frame(width: 560, height: 460)
+        .frame(width: 600, height: 480)
         .alert("确定要恢复所有出厂设置吗？", isPresented: $showResetAlert) {
             Button("取消", role: .cancel) {}
             Button("恢复默认", role: .destructive) {
@@ -81,20 +81,20 @@ public struct SettingsView: View {
                 
                 switch preferenceStore.preferences.triggerMode {
                 case .hover:
-                    Text("鼠标停留在顶部刘海区域时自动触发展开。")
+                    Text("鼠标停留在顶部刘海或顶边缘热区时自动触发展开。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .click:
-                    Text("鼠标划过或悬停不展开，仅在显式点击顶部胶囊时展开/收起。")
+                    Text("鼠标划过或停留均不展开，仅在显式点击顶部胶囊时展开或收起。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .hoverAndClick:
-                    Text("既支持鼠标悬停自动展开，也可随时点击胶囊立即切换。")
+                    Text("既支持鼠标悬停自动展开，亦可随时点击胶囊立即切换展开或收起。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             } header: {
-                Text("触发控制")
+                Text("灵动岛唤醒与展开")
             }
             
             Section {
@@ -103,17 +103,17 @@ public struct SettingsView: View {
                     set: { val in preferenceStore.update { $0.autoCollapseOnClick = val } }
                 ))
                 
-                Toggle("交互触觉震动反馈", isOn: Binding(
+                Toggle("交互触觉振动反馈", isOn: Binding(
                     get: { preferenceStore.preferences.enableHapticFeedback },
                     set: { val in preferenceStore.update { $0.enableHapticFeedback = val } }
                 ))
                 
-                Toggle("无遮挡图标时自动隐藏灵动岛胶囊", isOn: Binding(
+                Toggle("无遮挡图标时自动隐藏紧凑胶囊", isOn: Binding(
                     get: { preferenceStore.preferences.hideWhenNoOverflow },
                     set: { val in preferenceStore.update { $0.hideWhenNoOverflow = val } }
                 ))
             } header: {
-                Text("交互与视觉")
+                Text("交互行为与视觉显示")
             }
             
             Section {
@@ -129,29 +129,29 @@ public struct SettingsView: View {
                 
                 switch preferenceStore.preferences.externalDisplayMode {
                 case .followFocusedScreen:
-                    Text("外接平直显示器采用「按需悬浮浮轨（Floating Shelf）」，常态 100% 隐形、零固定假胶囊；碰顶中央热区即时展开，收起后视口自动归还内置刘海屏。")
+                    Text("灵动岛跟随当前激活屏幕。外接平直显示器折叠常态下完全隐形穿透，触碰顶部中央热区即时原位展开。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .mainScreenOnly:
-                    Text("灵动岛始终固定在内置刘海屏或主显示器顶部，外接平直屏幕不激活悬浮浮轨。")
+                    Text("灵动岛固定驻留在主显示器（内置刘海屏）顶部，不在外接扩展屏幕显示。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .disabled:
-                    Text("仅在内置刘海屏启用灵动岛，外接显示器完全禁用且不响应碰顶热区。")
+                    Text("仅在检测到内置刘海屏时启用灵动岛，外接平直显示器完全禁用。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             } header: {
-                Text("多显示器支持")
+                Text("多显示器协同策略")
             }
             
             Section {
-                Toggle("在 macOS 顶部菜单栏显示常驻托盘图标", isOn: Binding(
+                Toggle("在系统顶部菜单栏显示常驻图标", isOn: Binding(
                     get: { preferenceStore.preferences.showMenuBarIcon },
                     set: { val in preferenceStore.update { $0.showMenuBarIcon = val } }
                 ))
                 
-                Toggle("登录时自动启动 NotchRail", isOn: Binding(
+                Toggle("开机登录时自动启动 NotchRail", isOn: Binding(
                     get: { preferenceStore.preferences.launchAtLogin },
                     set: { val in
                         preferenceStore.update { $0.launchAtLogin = val }
@@ -159,22 +159,7 @@ public struct SettingsView: View {
                     }
                 ))
             } header: {
-                Text("系统与托盘")
-            }
-            
-            Section {
-                HStack {
-                    Text("彻底退出 NotchRail 应用程序")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button("退出 NotchRail", role: .destructive) {
-                        NSApplication.shared.terminate(nil)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                }
-            } header: {
-                Text("应用控制")
+                Text("系统与启动")
             }
         }
         .formStyle(.grouped)
@@ -187,7 +172,7 @@ public struct SettingsView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("展开悬停防抖延迟")
+                        Text("移入展开防抖延迟")
                         Spacer()
                         Text("\(Int(preferenceStore.preferences.hoverExpandDelayMs)) ms")
                             .foregroundColor(.secondary)
@@ -203,7 +188,7 @@ public struct SettingsView: View {
                         step: 10
                     )
                     
-                    Text("鼠标进入刘海区域后停留超过此时间才触发展开，防止快速划过误触。推荐 120ms。")
+                    Text("光标进入刘海区域或热区后停留超过此时间方触发展开，防止快速划过误触。推荐 120ms。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -211,7 +196,7 @@ public struct SettingsView: View {
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("移出收起宽限延迟")
+                        Text("移出收起缓冲时间")
                         Spacer()
                         Text("\(Int(preferenceStore.preferences.collapseDelayMs)) ms")
                             .foregroundColor(.secondary)
@@ -227,7 +212,7 @@ public struct SettingsView: View {
                         step: 10
                     )
                     
-                    Text("光标离开灵动岛后保留的宽限时间，期间重新移入可无缝中断收起。推荐 300ms。")
+                    Text("光标离开灵动岛后保留的缓冲宽限期，期间重新移入可无缝中断收起。推荐 300ms。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -242,7 +227,7 @@ public struct SettingsView: View {
                     
                     Spacer()
                     
-                    Button("恢复出厂推荐时延") {
+                    Button("恢复推荐时延") {
                         preferenceStore.update {
                             $0.hoverExpandDelayMs = IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0
                             $0.collapseDelayMs = IslandTheme.Timing.COLLAPSE_DELAY * 1000.0
@@ -251,7 +236,7 @@ public struct SettingsView: View {
                     .controlSize(.small)
                 }
             } header: {
-                Text("时序控制")
+                Text("响应延迟与防误触时序")
             }
         }
         .formStyle(.grouped)
@@ -407,7 +392,7 @@ public struct SettingsView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
-                    Text("自动识别被刘海遮挡或挤出屏幕的菜单栏图标并实时镜像到灵动岛")
+                    Text("自动识别被刘海遮挡或挤出屏幕的菜单栏图标，并实时镜像到灵动岛")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -417,7 +402,7 @@ public struct SettingsView: View {
                 Button {
                     syncCoordinator.scheduleSync(immediate: true, showProgress: true)
                 } label: {
-                    Label("立即重扫", systemImage: "arrow.clockwise")
+                    Label("重新扫描菜单栏", systemImage: "arrow.clockwise")
                 }
                 .controlSize(.small)
             }
@@ -558,7 +543,7 @@ public struct SettingsView: View {
                     Circle()
                         .fill(Color.orange)
                         .frame(width: 5, height: 5)
-                    Text("岛内展示 (溢出)")
+                    Text("岛内承接 (溢出)")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.orange)
                 }
@@ -575,7 +560,7 @@ public struct SettingsView: View {
                     Circle()
                         .fill(Color.secondary.opacity(0.6))
                         .frame(width: 5, height: 5)
-                    Text("原生可见")
+                    Text("菜单栏可见")
                         .font(.system(size: 11, weight: .regular))
                         .foregroundColor(.secondary)
                 }
@@ -589,7 +574,7 @@ public struct SettingsView: View {
         .padding(.vertical, 6)
     }
     
-    // MARK: - Tab 4: 关于与诊断 (About & Health)
+    // MARK: - Tab 4: 运行诊断与关于 (Diagnostics & About)
     
     private var aboutTab: some View {
         ScrollView {
@@ -613,18 +598,23 @@ public struct SettingsView: View {
                         .font(.title3.weight(.bold))
                     
                     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.8"
-                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "7"
-                    Text("Extended Menu Bar for MacBook Notch · v\(version) (\(build))")
+                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "8"
+                    Text("MacBook 物理刘海与状态栏沉浸式扩展 · v\(version) (\(build))")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
                 .padding(.top, 8)
                 
-                // 权限健康卡片
-                VStack(spacing: 8) {
+                // 权限健康诊断卡片
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("核心运行权限诊断")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 2)
+                    
                     permissionCard(
                         title: "辅助功能权限 (Accessibility)",
-                        subtitle: "用于派发原生菜单栏点击事件",
+                        subtitle: "用于模拟点击并唤起被遮挡应用的原生菜单与弹窗",
                         isGranted: permissionManager.isAccessibilityGranted
                     ) {
                         permissionManager.openSystemSettings()
@@ -632,7 +622,7 @@ public struct SettingsView: View {
                     
                     permissionCard(
                         title: "屏幕录制权限 (Screen Recording)",
-                        subtitle: "用于按 windowID 截取高清实时图标",
+                        subtitle: "用于逐窗捕获菜单栏状态项的高清实时图标",
                         isGranted: permissionManager.isScreenCaptureGranted
                     ) {
                         permissionManager.openScreenCaptureSettings()
@@ -650,18 +640,18 @@ public struct SettingsView: View {
                             isRefreshingPermissions = false
                         }
                     } label: {
-                        Label(isRefreshingPermissions ? "检测中..." : "刷新状态与重扫", systemImage: "arrow.clockwise")
+                        Label(isRefreshingPermissions ? "检测中..." : "重新检测权限与重扫", systemImage: "arrow.clockwise")
                     }
                     .controlSize(.small)
                     
-                    Button("GitHub 仓库") {
+                    Button("GitHub 源码仓库") {
                         if let url = URL(string: "https://github.com/AeroSheepZ/NotchRail") {
                             NSWorkspace.shared.open(url)
                         }
                     }
                     .controlSize(.small)
                     
-                    Button("退出应用", role: .destructive) {
+                    Button("彻底退出应用", role: .destructive) {
                         NSApplication.shared.terminate(nil)
                     }
                     .controlSize(.small)
