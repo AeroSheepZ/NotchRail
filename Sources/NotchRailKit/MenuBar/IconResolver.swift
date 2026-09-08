@@ -64,6 +64,8 @@ public final class IconResolver: ObservableObject {
     private var cache: [String: CapturedIcon] = [:]
     /// 跨窗口生命周期的稳定应用图元二级缓存（persistentKey → 带真实倍率的截图）
     private var persistentCache: [String: CapturedIcon] = [:]
+    /// 记录各项上一次原始捕获的签名特征，用于静态图元零重绘 Dirty-Check (Issue #51)
+    private var rawSignatures: [String: RawCaptureSignature] = [:]
     /// LRU 访问顺序（从最旧到最新）
     private var accessOrder: [String] = []
     /// 失败计数（含最后失败时间，用于冷却判定）
@@ -74,6 +76,14 @@ public final class IconResolver: ObservableObject {
     private struct FailedCapture {
         var failureCount: Int
         var lastFailureTime: Date
+    }
+
+    /// 原始窗口位图特征签名（用于极速比对位图是否发生任何变动）
+    public struct RawCaptureSignature: Equatable, Sendable {
+        public let boundsWidth: CGFloat
+        public let pixelWidth: Int
+        public let pixelHeight: Int
+        public let dataHash: Int
     }
 
     /// 捕获成功的图像（CGImage + 捕获时的真实倍率）
@@ -115,9 +125,10 @@ public final class IconResolver: ObservableObject {
         }
     }
 
-    /// 单次捕获管线的结果（按 persistentKey 索引）
+    /// 单次捕获管线的结果（按 iconCacheKey 索引）
     private struct CaptureResult {
         var images: [String: CapturedIcon] = [:]
+        var signatures: [String: RawCaptureSignature] = [:]
         var failedKeys: Set<String> = []
     }
 
@@ -152,9 +163,14 @@ public final class IconResolver: ObservableObject {
         // 2. 未授权屏幕录制时直接返回
         guard CGPreflightScreenCaptureAccess() else { return }
 
-        // 3. 获取失败冷却黑名单并执行后台捕获管线，由 apply 内部的 isVisuallyEqual 像素比对动态更新三方网速/天气/时钟数值
+        // 3. 获取失败冷却黑名单并执行后台捕获管线（支持静态零重绘与动态像素比对）
         let blacklisted = currentlyBlacklistedKeys()
-        let result = await Self.capturePipeline(items, blacklistedKeys: blacklisted)
+        let result = await Self.capturePipeline(
+            items,
+            blacklistedKeys: blacklisted,
+            cachedIcons: cache,
+            signatures: rawSignatures
+        )
         apply(result, to: items)
     }
 
@@ -185,6 +201,9 @@ public final class IconResolver: ObservableObject {
         for item in items {
             let key = item.iconCacheKey
             if let icon = result.images[key] {
+                if let sig = result.signatures[key] {
+                    rawSignatures[key] = sig
+                }
                 // 视觉相等且已发布 loaded 态 → 不更新（不触发重渲染）
                 let isAlreadyLoaded: Bool = {
                     if case .loaded = iconStates[key] { return true }
@@ -201,6 +220,7 @@ public final class IconResolver: ObservableObject {
                 failedCaptures.removeValue(forKey: key)
                 failedCaptures.removeValue(forKey: item.persistentKey)
             } else if result.failedKeys.contains(key) {
+                rawSignatures.removeValue(forKey: key)
                 // 若该项截图失败（如处于离屏或副屏透明窗口），优先复用此前捕获成功的真实位图
                 if let fallback = persistentCache[item.persistentKey] {
                     if cache[key] == nil {
@@ -316,12 +336,14 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 捕获管线（后台线程执行）
 
-    /// 纯函数式捕获管线：直接逐窗高精度截图 → scale 校验 → 自动裁剪
+    /// 纯函数式捕获管线：直接逐窗高精度截图 → 签名 Dirty-Check → 静态零重绘 → scale 校验 → 自动裁剪
     ///
     /// nonisolated + async → 自动运行在全局并发执行器，不阻塞 MainActor
     private nonisolated static func capturePipeline(
         _ items: [MenuBarItem],
-        blacklistedKeys: Set<String>
+        blacklistedKeys: Set<String>,
+        cachedIcons: [String: CapturedIcon],
+        signatures: [String: RawCaptureSignature]
     ) async -> CaptureResult {
         var result = CaptureResult()
 
@@ -338,21 +360,48 @@ public final class IconResolver: ObservableObject {
             return result
         }
 
-        // 2. 逐窗进行原生真实菜单栏截图
+        // 2. 逐窗进行原生真实菜单栏截图与零重绘比对 (Issue #51)
         for entry in entries {
+            let key = entry.item.iconCacheKey
             guard let image = Bridging.captureWindow(entry.item.windowID),
-                  image.width > 0, image.height > 0,
-                  !image.isFullyTransparent
+                  image.width > 0, image.height > 0
             else {
-                result.failedKeys.insert(entry.item.iconCacheKey)
+                result.failedKeys.insert(key)
                 continue
             }
             
-            // 自动裁剪透明边距并归一化倍率
-            let trimmed = image.trimmingTransparentPixels() ?? image
+            // 快速计算原始像素数据的哈希（微秒级）
+            let dataHash: Int
+            if let data = image.dataProvider?.data {
+                dataHash = (data as Data).hashValue
+            } else {
+                dataHash = 0
+            }
+            
+            let currentSig = RawCaptureSignature(
+                boundsWidth: entry.bounds.width,
+                pixelWidth: image.width,
+                pixelHeight: image.height,
+                dataHash: dataHash
+            )
+            
+            // 静态图元零重绘校验 (Zero-Recrop): 若原始图像签名未变且已有有效缓存，直接复用旧图，彻底跳过重绘裁剪
+            if let lastSig = signatures[key], lastSig == currentSig, let existingIcon = cachedIcons[key] {
+                result.images[key] = existingIcon
+                result.signatures[key] = currentSig
+                continue
+            }
+            
+            // 自动裁剪透明边距并归一化倍率（若全透明无可见像素则返回 nil 标记失败，彻底消除冗余 isFullyTransparent）
+            guard let trimmed = image.trimmingTransparentPixels() else {
+                result.failedKeys.insert(key)
+                continue
+            }
+            
             let rawScale = CGFloat(image.width) / max(1, entry.bounds.width)
             let scale = validatedScale(rawScale) ?? max(1.0, rawScale.rounded())
-            result.images[entry.item.iconCacheKey] = CapturedIcon(cgImage: trimmed, scale: scale)
+            result.images[key] = CapturedIcon(cgImage: trimmed, scale: scale)
+            result.signatures[key] = currentSig
         }
 
         return result
@@ -388,6 +437,7 @@ public final class IconResolver: ObservableObject {
     public func clearCache() {
         cache.removeAll()
         persistentCache.removeAll()
+        rawSignatures.removeAll()
         accessOrder.removeAll()
         failedCaptures.removeAll()
         iconStates.removeAll()
@@ -443,42 +493,10 @@ extension CGImage {
 
     /// 是否整张图全透明且无任何可见色彩内容（兼容 RGBA 与 XRGB 格式）
     nonisolated var isFullyTransparent: Bool {
-        guard width > 0, height > 0 else { return true }
-        let bytesPerPixel = 4
-        let bytesPerRow = width * bytesPerPixel
-        guard
-            let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: Self.SRGB_COLOR_SPACE,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            )
-        else { return false }
-        context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let data = context.data else { return false }
-        let ptr = data.assumingMemoryBound(to: UInt8.self)
-        let rowStride = context.bytesPerRow
-        for y in 0..<height {
-            let rowBase = y * rowStride
-            for x in 0..<width {
-                let pixelOffset = rowBase + x * bytesPerPixel
-                let r = ptr[pixelOffset]
-                let g = ptr[pixelOffset + 1]
-                let b = ptr[pixelOffset + 2]
-                let a = ptr[pixelOffset + 3]
-                // 任意通道存在可见内容（透明度或色彩通道）即非全透明
-                if a > 4 || (r > 4 || g > 4 || b > 4) {
-                    return false
-                }
-            }
-        }
-        return true
+        return trimmingTransparentPixels() == nil
     }
 
-    /// 自动裁剪边缘全透明像素
+    /// 自动裁剪边缘全透明像素；若整图全透明无可见像素，直接返回 nil (Issue #51)
     nonisolated func trimmingTransparentPixels(alphaThreshold: UInt8 = 6) -> CGImage? {
         guard width > 0, height > 0 else { return nil }
         let bytesPerPixel = 4
@@ -496,7 +514,7 @@ extension CGImage {
         else { return nil }
         
         context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let data = context.data else { return self }
+        guard let data = context.data else { return nil }
         let ptr = data.assumingMemoryBound(to: UInt8.self)
         let rowStride = context.bytesPerRow
         
@@ -526,8 +544,9 @@ extension CGImage {
             }
         }
         
+        // 若整图无任何可见像素，直接返回 nil，彻底合并与替代 isFullyTransparent (Issue #51)
         guard hasVisiblePixel, minX <= maxX, minY <= maxY else {
-            return self
+            return nil
         }
         
         // 允许四周保留 1px 微安全边距，避免边缘抗锯齿裁切
@@ -541,7 +560,7 @@ extension CGImage {
         
         // 若裁切区域与原图几乎相同（相差 <= 2px），直接返回原图
         if cropWidth >= width - 2 && cropHeight >= height - 2 {
-            return self
+            return self.detachedCopy() ?? self
         }
         
         // CGImage.cropping 坐标系与 CGContext 一致（左上角为原点）

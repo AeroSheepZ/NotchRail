@@ -21,6 +21,10 @@ public final class MouseMonitor: ObservableObject {
     private var lastMouseTimestamp: TimeInterval?
     private var cancellables = Set<AnyCancellable>()
     
+    /// 16ms 鼠标移动节流时间戳（防抖高刷鼠标事件，消除无节制 Task 堆分配，Issue #51）
+    private nonisolated(unsafe) static var lastGlobalMoveUptime: TimeInterval = 0
+    private var lastLocalMoveUptime: TimeInterval = 0
+    
     private init() {}
     
     /// 取消外接屏 120ms 停留意图防抖定时器
@@ -54,22 +58,31 @@ public final class MouseMonitor: ObservableObject {
             }
         }
         
-        // 2. 局部鼠标点击与移动监听（用户在自身灵动岛或窗口内点击/移动）
+        // 2. 局部鼠标点击与移动监听（主线程 RunLoop 同步直调，16ms 节流，消除 Task 堆分配）
         localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .mouseMoved]) { [weak self] event in
-            Task { @MainActor in
-                if event.type == .mouseMoved {
-                    self?.handleMouseMove(at: NSEvent.mouseLocation)
-                } else {
-                    self?.handleClick(at: NSEvent.mouseLocation)
+            guard let self = self else { return event }
+            if event.type == .mouseMoved {
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - self.lastLocalMoveUptime >= 0.016 {
+                    self.lastLocalMoveUptime = now
+                    self.handleMouseMove(at: NSEvent.mouseLocation)
                 }
+            } else {
+                self.handleClick(at: NSEvent.mouseLocation)
             }
             return event
         }
         
-        // 3. 全局鼠标移动监听（驱动非灵动岛透明区域 100% 硬件穿透，绝不遮挡底层应用）
+        // 3. 全局鼠标移动监听（16ms 节流限制，超频事件在闭包层直接丢弃，彻底消除微任务堆分配）
         globalMouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - Self.lastGlobalMoveUptime < 0.016 {
+                return
+            }
+            Self.lastGlobalMoveUptime = now
+            let location = NSEvent.mouseLocation
             Task { @MainActor in
-                self?.handleMouseMove(at: NSEvent.mouseLocation)
+                self?.handleMouseMove(at: location)
             }
         }
         
@@ -114,6 +127,8 @@ public final class MouseMonitor: ObservableObject {
             NSEvent.removeMonitor(globalMoved)
             globalMouseMovedMonitor = nil
         }
+        Self.lastGlobalMoveUptime = 0
+        lastLocalMoveUptime = 0
         cancellables.removeAll()
     }
     
@@ -132,6 +147,19 @@ public final class MouseMonitor: ObservableObject {
         let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
         let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        
+        // 快速熔断与触顶预热调度 (Issue #51)
+        if !isExpanded && !isAwakenedInFullScreen {
+            let topZoneThreshold = geom.screenFrame.maxY - (geom.statusBarHeight + 60.0)
+            if location.y < topZoneThreshold {
+                // 光标处于屏幕中下部工作区，直接熔断退出，避免后续碰撞与几何运算
+                cancelExternalDwellTimer()
+                return
+            }
+            
+            // 光标自下而上接近状态栏/刘海顶部热区，唤醒单次增量预热
+            MenuBarSyncCoordinator.shared.armPrewarm()
+        }
         
         // -------------------------------------------------------------
         // 分流 A: 内建物理刘海屏 (geom.hasPhysicalNotch == true)

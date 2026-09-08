@@ -25,15 +25,18 @@ NotchRail 0.0.6 introduces **External Non-Notch Display Dynamic Collision Detect
 • Physical Invariant: Camera cutout centered on top                       • Physical Invariant: Zero hardware obstructions
 • Overflow Formula: minX < notchRightEdge + 24pt                          • Overflow Formula: minX < (AppMenuBoundary + 12pt)
 • Idle State: Permanent black capsule + yellow ear wings                  • Idle State: 100% Invisible (Zero-presence, zero fake notch)
-• Expansion Form: Liquid drop-down fluid expansion                        • Expansion Form: Central 240pt hot-zone 120ms dwell reveal
-• Viewport Ownership: Permanent home anchor of IslandPanel                • Viewport Ownership: Temporarily leased on expansion, returned on collapse
+• Expansion Form: Liquid drop-down fluid expansion                        • Expansion Form: Central 240pt hot-zone 120ms dwell reveal (Unified Island)
+• Viewport Ownership: Permanent home anchor of IslandPanel                • Viewport Ownership: Focus Following (externalStealth when idle, reveals in-place)
 ```
 
 1. **Zero-Presence Idle State on Flat Displays**: On non-notch displays (`hasPhysicalNotch == false`), NotchRail completely eliminates fixed fake notch placeholders. The idle state is 100% invisible (`alpha = 0.0`, `ignoresMouseEvents = true`), leaving the native menu bar pristine and unobstructed.
 2. **Dynamic Application Menu Collision Detection**: Replaces the hardcoded 160pt center virtual notch with real-time tracking of the active application's menu bar right boundary (`AppMenuBoundary`). A status item is deemed an `OverflowItem` on external displays if and only if its horizontal position collides with the active application's menu boundary (`item.minX < AppMenuBoundary + 12pt`) or exceeds the physical display bounds.
-3. **Restricted Top-Center Hot-Zone with Dwell Gate**: An edge awakening zone restricted to the top center ($\pm 120\text{pt}$ horizontally, $\le 4\text{pt}$ vertically) with a mandatory 120ms dwell filter. Users moving the cursor across the top edge or interacting with native menus (File/Edit or Clock/Wi-Fi) will never accidentally trigger the floating shelf.
-4. **Viewport Leasing Architecture ("Notch Guard, External Lease")**: The single `IslandPanel` instance permanently guards the MacBook's physical notch display, maintaining its dynamic ear wings and badge. Only when an external display actively triggers an expansion does the panel atomically lease to the external display, smoothly sliding out as a flat-docked `FloatingShelf` (`topEarRadius = 0.0`). Upon collapse, the panel seamlessly returns to guard the physical notch.
-5. **Immediate Dismiss on Outside Click**: Clicking anywhere outside the expanded floating shelf immediately dismisses the overlay with zero click lag to underlying applications.
+3. **Restricted Top-Center Hot-Zone with Dwell Gate**: An edge awakening zone restricted to the top center ($\pm 120\text{pt}$ horizontally, $\le 4\text{pt}$ vertically) with a mandatory 120ms dwell filter. Users moving the cursor across the top edge or interacting with native menus (File/Edit or Clock/Wi-Fi) will never accidentally trigger the island.
+4. **Focus Following Architecture & Unified Dynamic Island Design**: 
+   - **Visual Identity**: The concept of a flat-docked `FloatingShelf` without horn ears (`topEarRadius = 0.0`) is completely abolished. The expanded appearance on external flat displays is **100% visually unified with the built-in notch island**, maintaining `topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)`, pure black light-absorbing base, and subtle glowing stroke;
+   - **Focus Following (Abolishing Viewport Leasing)**: The "Viewport Leasing" terminology and mechanics are eliminated. Ownership flows with active screen focus. On flat external displays, the folded idle state is strictly `externalStealth` (100% invisible and click-through), expanding in-place when awakened, and fading out in-place when collapsed.
+   - **Default Trigger Mode**: `UserPreferences.triggerMode` is formally established as `.hoverAndClick` (hover or click) by default.
+5. **Immediate Dismiss on Outside Click**: Clicking anywhere outside the expanded island immediately dismisses the overlay with zero click lag to underlying applications.
 6. **Zero-Overflow Mute Gate**: If an external display has zero collided/overflowed items, the top-center edge hot-zone remains strictly dormant, ensuring zero unwanted popups.
 7. **Full-Screen Space Yielding**: In full-screen spaces on external displays, edge detection yields priority to the native macOS descending menu bar, avoiding double dark bar occlusion.
 
@@ -120,27 +123,28 @@ public enum OverflowCalculator {
   4. Cache value in `ScreenManager.frontmostAppMenuMaxX`.
 - Baseline fallback: If accessibility returns empty or the active application is Finder, fall back to `screen.frame.minX + 180.0pt` (standard Apple logo + app title reservation).
 
-### 3. Viewport Leasing Architecture ("Notch Guard, External Lease")
+### 3. Focus Following Architecture & Unified Dynamic Island Design
 
-Manage the global singleton `IslandPanel` through a strict leasing lifecycle:
+Manage the global `IslandPanel` viewport through an active focus-driven lifecycle:
 
 ```
 [Normal Idle State]
-   IslandPanel securely anchored to MacBook Physical Notch (alpha = 1.0, compact capsule active)
-   External Flat Display has 0 windows (alpha = 0.0, ignoresMouseEvents = true)
+   - Built-In Notch Screen: IslandPanel anchored to MacBook Physical Notch (alpha = 1.0, compact capsule active)
+   - External Flat Display: Idle state is externalStealth (alpha = 0.0, ignoresMouseEvents = true, 100% physical click-through)
         │
-        ▼ (User hovers top-center hot-zone on External Display for >= 120ms with overflowCount > 0)
-[Lease Acquisition]
-   Panel frame atomically shifts to External Display top-center (x = centerX - width/2, y = screenMaxY - 84)
-   Presentation morphs to FloatingShelf (topEarRadius = 0.0, alpha = 1.0, ignoresMouseEvents = false)
+        ▼ (User focuses External Display & hovers top-center hot-zone for >= 120ms with overflowCount > 0)
+[In-Place Expansion on External Display]
+   - Panel frame anchored to External Display top-center (x = centerX - width/2, y = screenMaxY - 84)
+   - Presentation: Unified Dynamic Island with topEarRadius = 5.0pt, pure black base, alpha = 1.0, ignoresMouseEvents = false
         │
         ▼ (Mouse leaves for 300ms OR user clicks outside)
-[Lease Release & Return]
-   Panel collapses with slide-up fade (0.2s duration)
-   Panel frame atomically returns to MacBook Physical Notch (restoring compact capsule & ear wings)
+[In-Place Collapse & Fade]
+   - Panel collapses smoothly in-place with slide-up fade (0.2s duration)
+   - When idle on flat external display, returns cleanly to externalStealth (alpha = 0.0, ignoresMouseEvents = true)
 ```
 
-- **Clamshell Mode Fallback**: When no display possesses a physical notch (`allGeometries.contains(where: { $0.hasPhysicalNotch }) == false`), the panel remains assigned to the primary external display in a dormant `alpha = 0.0` state, expanding in place on demand.
+- **Clamshell Mode**: When no display possesses a physical notch, the panel operates in external display focus-following mode, expanding in place on demand and fading out completely when idle.
+- **Default Trigger Mode**: The system-wide domain default for `UserPreferences.triggerMode` is firmly locked to `.hoverAndClick`.
 
 ### 4. Edge Interaction & Central Hot-Zone Architecture
 

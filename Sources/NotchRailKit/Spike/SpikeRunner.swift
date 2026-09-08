@@ -481,5 +481,26 @@ public enum SpikeRunner {
         check(!IslandStateMachine.shared.currentState.isExpanded, "Test 20: Click outside must trigger collapse")
         check(IslandStateMachine.shared.currentState == .compact, "Test 20: State must return to compact")
         print("   ✅ Case 20 通过: 点击外部即时收起 (Dismiss on Click Outside) 与穿透状态机自愈契约通过")
+        
+        // Test 21: Smart Heartbeat 状态流转与静态图元零重绘契约 (Ticket 1 #51)
+        let syncCoordinator = MenuBarSyncCoordinator.shared
+        syncCoordinator.stop()
+        check(syncCoordinator.heartbeatState == .dormant, "Test 21: Initial state must be dormant")
+        
+        syncCoordinator.armPrewarm()
+        check(syncCoordinator.heartbeatState == .armed, "Test 21: armPrewarm must transition to armed")
+        
+        syncCoordinator.activateHeartbeat()
+        check(syncCoordinator.heartbeatState == .active, "Test 21: activateHeartbeat must transition to active")
+        
+        syncCoordinator.stop()
+        check(syncCoordinator.heartbeatState == .dormant, "Test 21: stop must return to dormant")
+        
+        let sig1 = IconResolver.RawCaptureSignature(boundsWidth: 40.0, pixelWidth: 80, pixelHeight: 66, dataHash: 12345)
+        let sig2 = IconResolver.RawCaptureSignature(boundsWidth: 40.0, pixelWidth: 80, pixelHeight: 66, dataHash: 12345)
+        let sig3 = IconResolver.RawCaptureSignature(boundsWidth: 40.0, pixelWidth: 80, pixelHeight: 66, dataHash: 67890)
+        check(sig1 == sig2, "Test 21: Identical signatures must be equal")
+        check(sig1 != sig3, "Test 21: Different dataHash must not be equal")
+        print("   ✅ Case 21 通过: Smart Heartbeat 按需休眠状态机与图元签名比对契约通过")
     }
 }

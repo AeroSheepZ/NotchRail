@@ -19,8 +19,18 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     private var discoveredItemsMap: [String: MenuBarItem] = [:]
     private var snapshotsByDisplay: [CGDirectDisplayID: MenuBarSnapshot] = [:]
     
+    /// 心跳按需运行状态
+    public enum HeartbeatState: Equatable, Sendable {
+        case dormant   // 完全休眠态：心跳定时器彻底置 nil，0.0% CPU 占用
+        case armed     // 警戒就绪态：光标靠近顶部热区，单次轻量增量预热完成
+        case active    // 展开活动态：灵动岛处于展开或收起缓冲中，运行 2.0s 心跳保障动态网速/时钟刷新
+    }
+    
+    @Published public private(set) var heartbeatState: HeartbeatState = .dormant
+    
     private var debounceTimer: Timer?
     private var heartbeatTimer: Timer?
+    private var heartbeatCooldownTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var pendingResync: Bool = false
     
@@ -45,13 +55,8 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         // 1. 立即执行一次全屏极速扫描与预热（展示完整加载动画）
         scheduleSync(immediate: true, showProgress: true)
         
-        // 2. 启动 2.5s 静默心跳（仅在非扫描空闲期触发动态数值轻量刷新，绝不推挤重扫队列）
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self = self, !self.isScanning else { return }
-                self.scheduleSync(immediate: false, showProgress: false)
-            }
-        }
+        // 2. 默认进入休眠态，心跳定时器彻底置 nil，杜绝后台死循环轮询发热 (Issue #51)
+        heartbeatState = .dormant
     }
     
     /// 停止同步
@@ -60,6 +65,51 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         debounceTimer = nil
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+        heartbeatCooldownTimer?.invalidate()
+        heartbeatCooldownTimer = nil
+        heartbeatState = .dormant
+    }
+    
+    /// 光标靠近顶部热区时唤醒警戒就绪态，执行单次静默增量预热
+    public func armPrewarm() {
+        guard heartbeatState == .dormant else { return }
+        heartbeatState = .armed
+        if !isScanning {
+            scheduleSync(immediate: false, showProgress: false)
+        }
+    }
+    
+    /// 灵动岛展开时激活心跳定时器（2.0s 周期刷新动态数值项）
+    public func activateHeartbeat() {
+        heartbeatCooldownTimer?.invalidate()
+        heartbeatCooldownTimer = nil
+        
+        guard heartbeatState != .active else { return }
+        heartbeatState = .active
+        
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self = self, !self.isScanning else { return }
+                self.scheduleSync(immediate: false, showProgress: false)
+            }
+        }
+    }
+    
+    /// 灵动岛收起后进入 5.0s 冷却，冷却结束后彻底销毁心跳定时器回归 dormant 休眠
+    public func deactivateHeartbeat() {
+        guard heartbeatState == .active else { return }
+        
+        heartbeatCooldownTimer?.invalidate()
+        heartbeatCooldownTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self = self, self.heartbeatState == .active else { return }
+                self.heartbeatTimer?.invalidate()
+                self.heartbeatTimer = nil
+                self.heartbeatCooldownTimer = nil
+                self.heartbeatState = .dormant
+            }
+        }
     }
     
     /// 安排一次扫描任务（支持 100ms 敏捷防抖）

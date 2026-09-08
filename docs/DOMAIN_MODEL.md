@@ -176,16 +176,16 @@ public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
 }
 
 public struct UserPreferences: Codable, Equatable, Sendable {
-    public var triggerMode: TriggerMode
-    public var autoCollapseOnClick: Bool
-    public var enableHapticFeedback: Bool
-    public var hideWhenNoOverflow: Bool
-    public var externalDisplayMode: ExternalDisplayMode
-    public var showMenuBarIcon: Bool
-    public var hoverExpandDelayMs: Double
-    public var collapseDelayMs: Double
-    public var ignoredBundleIDs: [String]
-    public var launchAtLogin: Bool
+    public var triggerMode: TriggerMode                 // 默认固化为 .hoverAndClick（悬停或点击）
+    public var autoCollapseOnClick: Bool                // 默认 true
+    public var enableHapticFeedback: Bool               // 默认 true
+    public var hideWhenNoOverflow: Bool                 // 默认 false
+    public var externalDisplayMode: ExternalDisplayMode // 默认 .followFocusedScreen
+    public var showMenuBarIcon: Bool                    // 默认 true
+    public var hoverExpandDelayMs: Double               // 默认 120.0ms (IslandTheme.Timing.HOVER_EXPAND_DELAY)
+    public var collapseDelayMs: Double                  // 默认 300.0ms (IslandTheme.Timing.COLLAPSE_DELAY)
+    public var ignoredBundleIDs: [String]               // 默认 []
+    public var launchAtLogin: Bool                      // 默认 false
 }
 ```
 
@@ -235,7 +235,8 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
   - `physicalNotchRect`：严格归零（`.zero`），废除假想 160pt 虚拟刘海；
   - `compactBounds`：常态归零（`.zero`），面板 100% 隐形（`alpha = 0`，`ignoresMouseEvents = true`）；
   - `appMenuRightEdge`：动态捕获前台活跃应用主菜单的右边缘 X 坐标，作为状态项挤压碰撞阈值；
-  - 展开形态：吸顶平直悬浮托轨 `FloatingShelf`（`topEarRadius = 0.0`），视口采用借调（`ViewportLease`）机制。
+  - **展开形态（统一黑仿真灵动岛）**：彻底废除平直托轨（`FloatingShelf`）概念。外接平直屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)` 经典外展喇叭弧、纯黑吸光底座与微光渐变描边；
+  - **视口架构（聚焦流转架构 Focus Following Architecture）**：彻底废除“视口借调（Viewport Leasing）”概念与术语。面板归属权由屏幕焦点唯一决定，折叠常态外接屏处于 `externalStealth`（100% 隐形穿透），触碰顶部中央热区即时原位升起展开。
 
 ---
 
