@@ -23,9 +23,9 @@ public actor MenuBarAXResolver {
 
     private init() {}
 
-    /// 获取最新的所有运行应用的菜单栏 Extra 空间映射表（带 2 秒缓存）
+    /// 获取最新的所有运行应用的菜单栏 Extra 空间映射表（带 120 秒长缓存，由生命周期事件定向失效，Issue #52）
     public func latestEntries() -> [Entry] {
-        if let last = lastScanDate, Date().timeIntervalSince(last) < 2.0, !cachedEntries.isEmpty {
+        if let last = lastScanDate, Date().timeIntervalSince(last) < 120.0, !cachedEntries.isEmpty {
             return cachedEntries
         }
         let entries = performAXScan()
@@ -34,10 +34,52 @@ public actor MenuBarAXResolver {
         return entries
     }
 
+    /// 强制失效缓存（当有新菜单栏应用启动、退出或被动态注册时触发）
+    public func invalidateCache() {
+        self.cachedEntries = []
+        self.lastScanDate = nil
+    }
+
     /// 注册潜在的菜单栏窗口拥有进程 PID（如窗口扫描中发现的 ownerPID）
     public func registerCandidatePID(_ pid: pid_t) {
         if pid != getpid() && pid != 0 {
+            let inserted = knownMenuBarPIDs.insert(pid).inserted
+            if inserted {
+                invalidateCache()
+            }
+        }
+    }
+
+    /// 响应新应用启动事件：定向探测 AXExtrasMenuBar，命中则增量入池并定向失效缓存 (Issue #52)
+    public func handleAppLaunched(app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        guard pid != getpid(), !app.isTerminated else { return }
+        guard app.activationPolicy != .prohibited else { return }
+
+        if let bundleID = app.bundleIdentifier?.lowercased() {
+            if bundleID.contains("webkit") ||
+               bundleID.contains("renderer") ||
+               bundleID.contains("helper") ||
+               bundleID.contains("gpu") {
+                return
+            }
+        }
+
+        let element = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(element, 0.05)
+        var extras: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, "AXExtrasMenuBar" as CFString, &extras) == .success,
+           let extrasElem = extras,
+           CFGetTypeID(extrasElem) == AXUIElementGetTypeID() {
             knownMenuBarPIDs.insert(pid)
+            invalidateCache()
+        }
+    }
+
+    /// 响应应用退出事件：即时移出候选池并定向失效缓存 (Issue #52)
+    public func handleAppTerminated(pid: pid_t) {
+        if knownMenuBarPIDs.remove(pid) != nil {
+            invalidateCache()
         }
     }
 
@@ -134,12 +176,8 @@ public actor MenuBarAXResolver {
         let ownPID = getpid()
         let now = Date()
 
-        // 1. 若已知池为空，或距上次全量发现超过 60 秒，执行一次带子进程过滤的快速发现
-        let shouldRunFullDiscovery = knownMenuBarPIDs.isEmpty ||
-            lastFullDiscoveryDate == nil ||
-            now.timeIntervalSince(lastFullDiscoveryDate!) > 60.0
-
-        if shouldRunFullDiscovery {
+        // 1. 仅在已知候选池为空时（应用冷启动首次），执行一次带子进程过滤的快速全量初始化发现 (Issue #52)
+        if knownMenuBarPIDs.isEmpty {
             discoverMenuBarPIDs()
             lastFullDiscoveryDate = now
         }

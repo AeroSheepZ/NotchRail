@@ -122,32 +122,50 @@ public enum Bridging {
 
     /// 获取指定窗口的详细描述（几何 / 归属 / 标题 / 层级）
     public static func windowDescriptor(for windowID: CGWindowID) -> WindowDescriptor? {
-        let pointer = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: 1)
+        return windowDescriptors(for: [windowID])[windowID]
+    }
+
+    /// 批量获取多个窗口的详细描述（单次批量 IPC，消除循环内 30 余次单独 C 系统调用，Issue #52）
+    public static func windowDescriptors(for windowIDs: [CGWindowID]) -> [CGWindowID: WindowDescriptor] {
+        guard !windowIDs.isEmpty else { return [:] }
+        let count = windowIDs.count
+        let pointer = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: count)
         defer { pointer.deallocate() }
-        pointer[0] = UnsafeRawPointer(bitPattern: UInt(windowID))
-        guard
-            let array = CFArrayCreate(kCFAllocatorDefault, pointer, 1, nil),
-            let list = CGWindowListCreateDescriptionFromArray(array) as? [[String: Any]],
-            let dict = list.first
-        else {
-            return nil
+        for (i, wid) in windowIDs.enumerated() {
+            pointer[i] = UnsafeRawPointer(bitPattern: UInt(wid))
         }
-        let frame: CGRect = {
-            guard
-                let bounds = dict[kCGWindowBounds as String] as? NSDictionary,
-                let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
-            else { return .zero }
-            return rect
-        }()
-        return WindowDescriptor(
-            windowID: windowID,
-            frame: frame,
-            ownerPID: dict[kCGWindowOwnerPID as String] as? pid_t ?? 0,
-            ownerName: dict[kCGWindowOwnerName as String] as? String,
-            title: dict[kCGWindowName as String] as? String,
-            layer: dict[kCGWindowLayer as String] as? Int ?? 0,
-            isOnScreen: dict[kCGWindowIsOnscreen as String] as? Bool ?? false
-        )
+        guard
+            let array = CFArrayCreate(kCFAllocatorDefault, pointer, count, nil),
+            let list = CGWindowListCreateDescriptionFromArray(array) as? [[String: Any]]
+        else {
+            return [:]
+        }
+
+        var result: [CGWindowID: WindowDescriptor] = [:]
+        result.reserveCapacity(list.count)
+
+        for dict in list {
+            guard let widNum = dict[kCGWindowNumber as String] as? NSNumber else { continue }
+            let wid = CGWindowID(widNum.uint32Value)
+            let frame: CGRect = {
+                guard
+                    let bounds = dict[kCGWindowBounds as String] as? NSDictionary,
+                    let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
+                else { return .zero }
+                return rect
+            }()
+            let desc = WindowDescriptor(
+                windowID: wid,
+                frame: frame,
+                ownerPID: dict[kCGWindowOwnerPID as String] as? pid_t ?? 0,
+                ownerName: dict[kCGWindowOwnerName as String] as? String,
+                title: dict[kCGWindowName as String] as? String,
+                layer: dict[kCGWindowLayer as String] as? Int ?? 0,
+                isOnScreen: dict[kCGWindowIsOnscreen as String] as? Bool ?? false
+            )
+            result[wid] = desc
+        }
+        return result
     }
 
     /// 按窗口 ID 截取窗口自身内容（即使被遮挡或 offscreen 也能截到窗口内容）

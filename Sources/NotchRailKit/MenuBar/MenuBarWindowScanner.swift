@@ -14,10 +14,13 @@ public actor MenuBarWindowScanner {
         let screenBounds = CGDisplayBounds(geometry.displayID)
         let axEntries = await MenuBarAXResolver.shared.latestEntries()
         
+        // 单次批量获取所有窗口描述，消除循环内 30 余次单独 IPC 调用 (Issue #52)
+        let descriptors = Bridging.windowDescriptors(for: windowIDs)
+        
         var items: [MenuBarItem] = []
 
         for windowID in windowIDs {
-            guard let info = Bridging.windowDescriptor(for: windowID) else { continue }
+            guard let info = descriptors[windowID] else { continue }
             guard info.layer == kCGStatusWindowLevel else { continue }
             guard info.frame.intersects(screenBounds) else { continue }
             guard info.frame.width > 2 && info.frame.height > 2 else { continue }

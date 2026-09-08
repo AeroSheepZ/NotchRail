@@ -231,9 +231,12 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         let ownPID = getpid()
         center.publisher(for: NSWorkspace.didLaunchApplicationNotification)
             .sink { [weak self] notif in
-                if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                   app.processIdentifier == ownPID {
+                guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.processIdentifier != ownPID else {
                     return
+                }
+                Task {
+                    await MenuBarAXResolver.shared.handleAppLaunched(app: app)
                 }
                 self?.scheduleSync()
             }
@@ -241,9 +244,12 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         
         center.publisher(for: NSWorkspace.didTerminateApplicationNotification)
             .sink { [weak self] notif in
-                if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                   app.processIdentifier == ownPID {
+                guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.processIdentifier != ownPID else {
                     return
+                }
+                Task {
+                    await MenuBarAXResolver.shared.handleAppTerminated(pid: app.processIdentifier)
                 }
                 self?.scheduleSync()
             }

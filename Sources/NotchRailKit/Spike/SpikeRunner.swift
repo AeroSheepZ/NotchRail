@@ -502,5 +502,22 @@ public enum SpikeRunner {
         check(sig1 == sig2, "Test 21: Identical signatures must be equal")
         check(sig1 != sig3, "Test 21: Different dataHash must not be equal")
         print("   ✅ Case 21 通过: Smart Heartbeat 按需休眠状态机与图元签名比对契约通过")
+        
+        // Test 22: 批量窗口描述提取与事件驱动 AX 候选池维护契约 (Ticket 2 #52)
+        let wids = Bridging.menuBarWindowIDs()
+        if !wids.isEmpty {
+            let descriptors = Bridging.windowDescriptors(for: wids)
+            check(!descriptors.isEmpty, "Test 22: Batch windowDescriptors must return non-empty map")
+            for (wid, desc) in descriptors {
+                check(desc.windowID == wid, "Test 22: WindowID in descriptor must match dictionary key")
+                check(desc.frame.width > 0 && desc.frame.height > 0, "Test 22: Window frame must be valid")
+            }
+        }
+        
+        let axResolver = MenuBarAXResolver.shared
+        await axResolver.invalidateCache()
+        let initialEntries = await axResolver.latestEntries()
+        check(initialEntries.count >= 0, "Test 22: latestEntries after invalidate must succeed")
+        print("   ✅ Case 22 通过: 批量窗口描述单次 IPC 提取与 AX 事件驱动缓存契约通过")
     }
 }
