@@ -128,19 +128,6 @@ public final class PreferenceStore: ObservableObject {
         }
     }
     
-    /// 将目标项目置顶（移到最前）
-    public func moveItemToTop(_ key: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
-        update { prefs in
-            var order = prefs.customItemOrder
-            order.removeAll { $0 == trimmed }
-            order.insert(trimmed, at: 0)
-            prefs.customItemOrder = order
-        }
-    }
-    
     /// 调整两个相邻位置或在列表中移动
     public func moveCustomItem(fromOffsets: IndexSet, toOffset: Int) {
         update { prefs in

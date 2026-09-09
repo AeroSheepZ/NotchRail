@@ -126,8 +126,8 @@ final class PreferenceStoreTests: XCTestCase {
         store.setCustomItemOrder(["com.app.first", "com.app.second", "com.app.third"])
         XCTAssertEqual(store.preferences.customItemOrder, ["com.app.first", "com.app.second", "com.app.third"])
         
-        // 2. 将第三个置顶
-        store.moveItemToTop("com.app.third")
+        // 2. 重新排序
+        store.setCustomItemOrder(["com.app.third", "com.app.first", "com.app.second"])
         XCTAssertEqual(store.preferences.customItemOrder, ["com.app.third", "com.app.first", "com.app.second"])
         
         // 3. 隐藏与解除隐藏

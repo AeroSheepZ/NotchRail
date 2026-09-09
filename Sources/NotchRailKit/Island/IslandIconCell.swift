@@ -109,19 +109,6 @@ public struct IslandIconCell: View {
             .modifier(ShakeEffect(shakes: shakeCount))
         }
         .buttonStyle(SpringIconButtonStyle())
-        .contextMenu {
-            Button {
-                hideThisItem()
-            } label: {
-                Label("在灵动岛中隐藏", systemImage: "eye.slash")
-            }
-            
-            Button {
-                moveThisItemToTop()
-            } label: {
-                Label("移至最前", systemImage: "arrow.left.to.line")
-            }
-        }
         .onHover { hovered in
             withAnimation(IslandTheme.Animation.HOVER_SPRING) {
                 isHovered = hovered
@@ -129,24 +116,6 @@ public struct IslandIconCell: View {
         }
         .help(item.title ?? item.bundleIdentifier ?? "Menu Item")
         .animation(IslandTheme.Animation.HOVER_SPRING, value: cellWidth)
-    }
-    
-    // MARK: - 快捷上下文操作
-    
-    private func hideThisItem() {
-        let key = item.bundleIdentifier ?? item.persistentKey
-        PreferenceStore.shared.hideItem(key)
-        if PreferenceStore.shared.preferences.enableHapticFeedback {
-            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-        }
-    }
-    
-    private func moveThisItemToTop() {
-        let key = item.bundleIdentifier ?? item.persistentKey
-        PreferenceStore.shared.moveItemToTop(key)
-        if PreferenceStore.shared.preferences.enableHapticFeedback {
-            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-        }
     }
 
     @ViewBuilder

@@ -90,20 +90,15 @@ public struct IslandRootView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .padding(.bottom, 6)
                             } else {
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 8) {
-                                        ForEach(overflowItems) { item in
-                                            IslandIconCell(
-                                                item: item,
-                                                state: iconResolver.iconStates[item.iconCacheKey] ?? .pending,
-                                                onTap: handleItemTap
-                                            )
-                                        }
+                                ReorderableIconRow(
+                                    items: overflowItems,
+                                    iconResolver: iconResolver,
+                                    onItemTap: handleItemTap,
+                                    onReorder: { reordered in
+                                        let newOrder = reordered.map { $0.bundleIdentifier ?? $0.persistentKey }
+                                        preferenceStore.setCustomItemOrder(newOrder)
                                     }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 2)
-                                }
-                                .frame(height: 36)
+                                )
                             }
                         }
                         .transition(

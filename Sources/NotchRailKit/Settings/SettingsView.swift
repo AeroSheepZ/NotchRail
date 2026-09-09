@@ -621,18 +621,6 @@ public struct SettingsView: View {
                         .strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.8)
                 )
                 
-                // 置顶操作
-                Button {
-                    preferenceStore.moveItemToTop(entry.key)
-                } label: {
-                    Image(systemName: "arrow.up.to.line")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("置顶在灵动岛最前")
-                .padding(.horizontal, 4)
-                
                 // 快捷隐藏按钮
                 Button {
                     preferenceStore.hideItem(entry.key)
