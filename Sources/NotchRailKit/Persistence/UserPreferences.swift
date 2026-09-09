@@ -50,6 +50,8 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var collapseDelayMs: Double
     /// 忽略/黑名单应用 Bundle ID 列表
     public var ignoredBundleIDs: [String]
+    /// 用户自定义应用在岛内展示的先后次序（基于 bundleIdentifier 或 persistentKey 列表）
+    public var customItemOrder: [String]
     /// 是否开机自启动
     public var launchAtLogin: Bool
     /// 用户是否已选择跳过「屏幕录制权限」引导
@@ -75,6 +77,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         hoverExpandDelayMs: Double = IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0,
         collapseDelayMs: Double = IslandTheme.Timing.COLLAPSE_DELAY * 1000.0,
         ignoredBundleIDs: [String] = [],
+        customItemOrder: [String] = [],
         launchAtLogin: Bool = false,
         skipScreenCapturePrompt: Bool = false
     ) {
@@ -87,6 +90,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.hoverExpandDelayMs = hoverExpandDelayMs
         self.collapseDelayMs = collapseDelayMs
         self.ignoredBundleIDs = ignoredBundleIDs
+        self.customItemOrder = customItemOrder
         self.launchAtLogin = launchAtLogin
         self.skipScreenCapturePrompt = skipScreenCapturePrompt
     }
@@ -115,6 +119,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.hoverExpandDelayMs = try container.decodeIfPresent(Double.self, forKey: .hoverExpandDelayMs) ?? (IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0)
         self.collapseDelayMs = try container.decodeIfPresent(Double.self, forKey: .collapseDelayMs) ?? (IslandTheme.Timing.COLLAPSE_DELAY * 1000.0)
         self.ignoredBundleIDs = try container.decodeIfPresent([String].self, forKey: .ignoredBundleIDs) ?? []
+        self.customItemOrder = try container.decodeIfPresent([String].self, forKey: .customItemOrder) ?? []
         self.launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         self.skipScreenCapturePrompt = try container.decodeIfPresent(Bool.self, forKey: .skipScreenCapturePrompt) ?? false
     }

@@ -145,12 +145,19 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         let startTime = Date()
         
         let allGeometries = ScreenManager.shared.allGeometries
-        let ignoredIDs = Set(PreferenceStore.shared.preferences.ignoredBundleIDs)
+        let prefs = PreferenceStore.shared.preferences
+        let ignoredIDs = Set(prefs.ignoredBundleIDs)
+        let customOrder = prefs.customItemOrder
         
         Task {
             // 1. 极速扫描当前活动屏幕
             let currentItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: currentGeom)
-            let currentSnapshot = OverflowCalculator.resolve(items: currentItems, geometry: currentGeom, ignoredBundleIDs: ignoredIDs)
+            let currentSnapshot = OverflowCalculator.resolve(
+                items: currentItems,
+                geometry: currentGeom,
+                ignoredBundleIDs: ignoredIDs,
+                customItemOrder: customOrder
+            )
             
             // 2. 立即同步预热当前屏幕全部图标（确保发布快照时第 0 帧即可呈现真实图标，消除加载占位）
             if !currentSnapshot.allItems.isEmpty {
@@ -173,7 +180,12 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 for otherGeom in allGeometries where otherGeom.displayID != currentGeom.displayID {
                     if showProgress || self.snapshotsByDisplay[otherGeom.displayID] == nil {
                         let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
-                        let otherSnap = OverflowCalculator.resolve(items: otherItems, geometry: otherGeom, ignoredBundleIDs: ignoredIDs)
+                        let otherSnap = OverflowCalculator.resolve(
+                            items: otherItems,
+                            geometry: otherGeom,
+                            ignoredBundleIDs: ignoredIDs,
+                            customItemOrder: customOrder
+                        )
                         if !otherSnap.allItems.isEmpty {
                             await IconResolver.shared.resolveIcons(for: otherSnap.allItems)
                         }

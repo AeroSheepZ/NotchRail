@@ -542,5 +542,36 @@ public enum SpikeRunner {
             extSM.triggerCollapse()
         }
         print("   ✅ Case 23 通过: 双屏独立面板生命周期与状态机物理隔离契约通过")
+        
+        // Case 24: 岛内快捷隐藏与自定义排序流转契约 (Ticket #54)
+        let item1 = MenuBarItem(processIdentifier: 801, bundleIdentifier: "com.notchrail.test1", title: "Test1", nativeFrame: CGRect(x: 750, y: 0, width: 30, height: 24))
+        let item2 = MenuBarItem(processIdentifier: 802, bundleIdentifier: "com.notchrail.test2", title: "Test2", nativeFrame: CGRect(x: 700, y: 0, width: 30, height: 24))
+        let item3 = MenuBarItem(processIdentifier: 803, bundleIdentifier: "com.notchrail.test3", title: "Test3", nativeFrame: CGRect(x: 650, y: 0, width: 30, height: 24))
+        
+        // 1. 验证自定义排序：即使 item1 在最右侧，当指定 order = ["com.notchrail.test3", "com.notchrail.test1"] 时，test3 必须第一，test1 第二，未排序的 test2 第三
+        let orderSnap = OverflowCalculator.resolve(
+            items: [item1, item2, item3],
+            geometry: mockGeometry,
+            customItemOrder: ["com.notchrail.test3", "com.notchrail.test1"]
+        )
+        check(orderSnap.overflowItems.count == 3, "Test 24: All 3 items should overflow")
+        check(orderSnap.overflowItems[0].bundleIdentifier == "com.notchrail.test3", "Test 24: test3 must be prioritized to index 0")
+        check(orderSnap.overflowItems[1].bundleIdentifier == "com.notchrail.test1", "Test 24: test1 must be at index 1")
+        check(orderSnap.overflowItems[2].bundleIdentifier == "com.notchrail.test2", "Test 24: unprioritized test2 must be at index 2")
+        
+        // 2. 验证快捷隐藏：忽略 test1，overflowItems 中立即剔除，总数变为 2
+        let hideSnap = OverflowCalculator.resolve(
+            items: [item1, item2, item3],
+            geometry: mockGeometry,
+            ignoredBundleIDs: ["com.notchrail.test1"],
+            customItemOrder: ["com.notchrail.test3", "com.notchrail.test1"]
+        )
+        check(hideSnap.overflowItems.count == 2, "Test 24: Ignored item must be removed from overflowItems")
+        check(hideSnap.overflowItems[0].bundleIdentifier == "com.notchrail.test3", "Test 24: First item must remain test3")
+        check(hideSnap.overflowItems[1].bundleIdentifier == "com.notchrail.test2", "Test 24: Second item must be test2")
+        let hiddenItem = hideSnap.allItems.first { $0.bundleIdentifier == "com.notchrail.test1" }
+        check(hiddenItem?.displayMode == .ignored, "Test 24: test1 must be marked as ignored")
+        
+        print("   ✅ Case 24 通过: 岛内快捷隐藏与自定义排序流转契约通过")
     }
 }

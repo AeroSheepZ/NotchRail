@@ -113,4 +113,39 @@ final class PreferenceStoreTests: XCTestCase {
         store.clearAllIgnored()
         XCTAssertTrue(store.preferences.ignoredBundleIDs.isEmpty)
     }
+    
+    func testCustomItemOrderAndHidingManagement() {
+        let suiteName = "com.notchrail.test.order.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        
+        let store = PreferenceStore(userDefaults: defaults)
+        XCTAssertTrue(store.preferences.customItemOrder.isEmpty)
+        
+        // 1. 设置自定义排序
+        store.setCustomItemOrder(["com.app.first", "com.app.second", "com.app.third"])
+        XCTAssertEqual(store.preferences.customItemOrder, ["com.app.first", "com.app.second", "com.app.third"])
+        
+        // 2. 将第三个置顶
+        store.moveItemToTop("com.app.third")
+        XCTAssertEqual(store.preferences.customItemOrder, ["com.app.third", "com.app.first", "com.app.second"])
+        
+        // 3. 隐藏与解除隐藏
+        XCTAssertFalse(store.isItemHidden("com.app.first"))
+        store.hideItem("com.app.first")
+        XCTAssertTrue(store.isItemHidden("com.app.first"))
+        store.unhideItem("com.app.first")
+        XCTAssertFalse(store.isItemHidden("com.app.first"))
+        
+        // 4. 重置自定义排序
+        store.resetCustomItemOrder()
+        XCTAssertTrue(store.preferences.customItemOrder.isEmpty)
+        
+        // 5. 持久化重载验证
+        store.setCustomItemOrder(["com.app.x", "com.app.y"])
+        store.hideItem("com.app.z")
+        let reloadedStore = PreferenceStore(userDefaults: defaults)
+        XCTAssertEqual(reloadedStore.preferences.customItemOrder, ["com.app.x", "com.app.y"])
+        XCTAssertTrue(reloadedStore.isItemHidden("com.app.z"))
+    }
 }

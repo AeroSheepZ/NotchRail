@@ -9,6 +9,7 @@ public struct MenuBarSnapshot: Equatable, Sendable {
     public let allItems: [MenuBarItem]
     public let screenFrame: CGRect
     public let notchRect: CGRect
+    public let customItemOrder: [String]
     
     public init(
         id: UUID = UUID(),
@@ -16,7 +17,8 @@ public struct MenuBarSnapshot: Equatable, Sendable {
         displayID: CGDirectDisplayID,
         allItems: [MenuBarItem],
         screenFrame: CGRect,
-        notchRect: CGRect
+        notchRect: CGRect,
+        customItemOrder: [String] = []
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -24,11 +26,32 @@ public struct MenuBarSnapshot: Equatable, Sendable {
         self.allItems = allItems
         self.screenFrame = screenFrame
         self.notchRect = notchRect
+        self.customItemOrder = customItemOrder
     }
     
-    /// 仅展示在灵动岛内的溢出项
+    /// 仅展示在灵动岛内的溢出项（优先遵循 customItemOrder 定义的先后顺序，未排序项按物理空间依序排布）
     public var overflowItems: [MenuBarItem] {
-        allItems.filter { $0.displayMode == .overflowed }
+        let overflowed = allItems.filter { $0.displayMode == .overflowed }
+        guard !customItemOrder.isEmpty else { return overflowed }
+        
+        return overflowed.sorted { a, b in
+            let keyA = a.bundleIdentifier ?? a.persistentKey
+            let keyB = b.bundleIdentifier ?? b.persistentKey
+            
+            let idxA = customItemOrder.firstIndex(of: keyA) ?? (a.bundleIdentifier.flatMap { customItemOrder.firstIndex(of: $0) })
+            let idxB = customItemOrder.firstIndex(of: keyB) ?? (b.bundleIdentifier.flatMap { customItemOrder.firstIndex(of: $0) })
+            
+            switch (idxA, idxB) {
+            case let (.some(iA), .some(iB)):
+                return iA < iB
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return false
+            }
+        }
     }
     
     /// 溢出项总数

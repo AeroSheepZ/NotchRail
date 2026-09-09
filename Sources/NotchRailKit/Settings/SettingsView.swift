@@ -298,9 +298,10 @@ public struct SettingsView: View {
                         .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.8)
                 )
                 
-                // 状态统计徽章
+                // 状态统计徽章与快捷排序重置
                 let allItems = filteredItems()
-                let overflowCount = allItems.filter { $0.isOverflowed }.count
+                let overflowCount = allItems.filter { $0.isOverflowed && !$0.isIgnored }.count
+                let ignoredCount = allItems.filter { $0.isIgnored }.count
                 HStack(spacing: 6) {
                     Text("共 \(allItems.count) 项")
                         .font(.system(size: 11, weight: .medium))
@@ -314,6 +315,26 @@ public struct SettingsView: View {
                             .padding(.vertical, 2)
                             .background(Color.orange.opacity(0.12))
                             .clipShape(Capsule())
+                    }
+                    
+                    if ignoredCount > 0 {
+                        Text("\(ignoredCount) 已隐藏")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.purple)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.purple.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                    
+                    if !preferenceStore.preferences.customItemOrder.isEmpty {
+                        Button {
+                            preferenceStore.resetCustomItemOrder()
+                        } label: {
+                            Text("恢复默认排序")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .controlSize(.mini)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -414,9 +435,11 @@ public struct SettingsView: View {
         var id: String { uniqueKey }
         let uniqueKey: String
         let originalIndex: Int
+        let key: String
         let title: String
         let bundleID: String
         let isOverflowed: Bool
+        let isIgnored: Bool
         let statusIcon: NSImage?
     }
     
@@ -424,16 +447,18 @@ public struct SettingsView: View {
     private func resolveAppEntry(item: MenuBarItem, index: Int) -> AppListEntry {
         let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
         let title = item.title ?? bundleID
-        
-        // 从 IconResolver 获取当前窗口捕获的真实菜单栏状态图标（优先实时解析态，回退持久缓存）
+        let key = item.bundleIdentifier ?? item.persistentKey
         let statusImage: NSImage? = IconResolver.shared.image(for: item)
+        let isIgnored = item.displayMode == .ignored || preferenceStore.isItemHidden(key) || (item.bundleIdentifier.map { preferenceStore.isItemHidden($0) } ?? false)
         
         return AppListEntry(
             uniqueKey: "\(bundleID)_\(item.windowID)",
             originalIndex: index,
+            key: key,
             title: title,
             bundleID: bundleID,
             isOverflowed: item.displayMode == .overflowed,
+            isIgnored: isIgnored,
             statusIcon: statusImage
         )
     }
@@ -458,14 +483,30 @@ public struct SettingsView: View {
         }
         
         // 3. 排序策略：
-        //   - 第 1 梯队：溢出项（isOverflowed == true，岛内展示），置顶（按扫描物理顺序 originalIndex 升序）
-        //   - 第 2 梯队：原生可见项（!isOverflowed，顶栏可见），倒序排布（originalIndex 降序）
+        //   - 已隐藏项置底
+        //   - 岛内展示项置顶（若存在 customItemOrder 优先按指定次序排布）
+        //   - 菜单栏原生可见项倒序排布
+        let customOrder = preferenceStore.preferences.customItemOrder
         result.sort { lhs, rhs in
+            if lhs.isIgnored != rhs.isIgnored {
+                return !lhs.isIgnored && rhs.isIgnored
+            }
             if lhs.isOverflowed != rhs.isOverflowed {
                 return lhs.isOverflowed && !rhs.isOverflowed
             }
             if lhs.isOverflowed && rhs.isOverflowed {
-                return lhs.originalIndex < rhs.originalIndex
+                let idxL = customOrder.firstIndex(of: lhs.key) ?? (lhs.bundleID.isEmpty ? nil : customOrder.firstIndex(of: lhs.bundleID))
+                let idxR = customOrder.firstIndex(of: rhs.key) ?? (rhs.bundleID.isEmpty ? nil : customOrder.firstIndex(of: rhs.bundleID))
+                switch (idxL, idxR) {
+                case let (.some(a), .some(b)):
+                    return a < b
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                case (.none, .none):
+                    return lhs.originalIndex < rhs.originalIndex
+                }
             }
             return lhs.originalIndex > rhs.originalIndex
         }
@@ -537,8 +578,32 @@ public struct SettingsView: View {
             
             Spacer()
             
-            // 极简状态徽标
-            if entry.isOverflowed {
+            // 状态徽标与快捷操作
+            if entry.isIgnored {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.purple)
+                        .frame(width: 5, height: 5)
+                    Text("已在岛内隐藏")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.purple)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.purple.opacity(0.12))
+                .clipShape(Capsule())
+                
+                Button {
+                    preferenceStore.unhideItem(entry.key)
+                    if !entry.bundleID.isEmpty {
+                        preferenceStore.unhideItem(entry.bundleID)
+                    }
+                } label: {
+                    Label("取消隐藏", systemImage: "eye")
+                        .font(.system(size: 11))
+                }
+                .controlSize(.small)
+            } else if entry.isOverflowed {
                 HStack(spacing: 4) {
                     Circle()
                         .fill(Color.orange)
@@ -555,6 +620,30 @@ public struct SettingsView: View {
                     Capsule()
                         .strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.8)
                 )
+                
+                // 置顶操作
+                Button {
+                    preferenceStore.moveItemToTop(entry.key)
+                } label: {
+                    Image(systemName: "arrow.up.to.line")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("置顶在灵动岛最前")
+                .padding(.horizontal, 4)
+                
+                // 快捷隐藏按钮
+                Button {
+                    preferenceStore.hideItem(entry.key)
+                } label: {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("在灵动岛中隐藏")
+                .padding(.horizontal, 4)
             } else {
                 HStack(spacing: 4) {
                     Circle()
@@ -568,6 +657,18 @@ public struct SettingsView: View {
                 .padding(.vertical, 3)
                 .background(Color(nsColor: .separatorColor).opacity(0.12))
                 .clipShape(Capsule())
+                
+                // 允许预设隐藏
+                Button {
+                    preferenceStore.hideItem(entry.key)
+                } label: {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("在灵动岛中隐藏")
+                .padding(.horizontal, 4)
             }
         }
         .padding(.horizontal, 10)
