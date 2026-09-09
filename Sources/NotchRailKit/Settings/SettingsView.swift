@@ -698,8 +698,8 @@ public struct SettingsView: View {
                     Text("NotchRail")
                         .font(.title3.weight(.bold))
                     
-                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.8"
-                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "8"
+                    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.9"
+                    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "9"
                     Text("MacBook 物理刘海与状态栏沉浸式扩展 · v\(version) (\(build))")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
