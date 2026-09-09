@@ -146,7 +146,8 @@ public final class MouseMonitor: ObservableObject {
         
         let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
-        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        let sm = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID)
+        let isExpanded = sm.currentState.isExpanded
         
         // 快速熔断与触顶预热调度 (Issue #51)
         if !isExpanded && !isAwakenedInFullScreen {
@@ -178,7 +179,7 @@ public final class MouseMonitor: ObservableObject {
                     fullScreenGraceTimer = nil
                     if !isAwakenedInFullScreen {
                         isAwakenedInFullScreen = true
-                        IslandStateMachine.shared.awakenFromFullScreen()
+                        sm.awakenFromFullScreen()
                         IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                     }
                 } else if isAwakenedInFullScreen {
@@ -204,7 +205,7 @@ public final class MouseMonitor: ObservableObject {
                                 guard let self = self else { return }
                                 self.isAwakenedInFullScreen = false
                                 self.fullScreenGraceTimer = nil
-                                IslandStateMachine.shared.enterFullScreenHidden()
+                                sm.enterFullScreenHidden()
                                 IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                             }
                         }
@@ -216,8 +217,8 @@ public final class MouseMonitor: ObservableObject {
                     isAwakenedInFullScreen = false
                     fullScreenGraceTimer?.invalidate()
                     fullScreenGraceTimer = nil
-                    if IslandStateMachine.shared.currentState.isFullScreenHidden {
-                        IslandStateMachine.shared.triggerCollapse()
+                    if sm.currentState.isFullScreenHidden {
+                        sm.triggerCollapse()
                     }
                 }
             }
@@ -234,7 +235,7 @@ public final class MouseMonitor: ObservableObject {
                 let isInside = NSMouseInRect(location, interactiveRect, false)
                 
                 if isInside {
-                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
                     fullScreenGraceTimer?.invalidate()
                     fullScreenGraceTimer = nil
                 } else {
@@ -246,16 +247,16 @@ public final class MouseMonitor: ObservableObject {
                                     guard let self = self else { return }
                                     self.isAwakenedInFullScreen = false
                                     self.fullScreenGraceTimer = nil
-                                    IslandStateMachine.shared.triggerCollapse()
-                                    IslandStateMachine.shared.enterFullScreenHidden()
+                                    sm.triggerCollapse()
+                                    sm.enterFullScreenHidden()
                                     IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+                                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(true, for: geom.displayID)
                                 }
                             }
                         }
                     } else {
                         if prefs.triggerMode != .click {
-                            IslandStateMachine.shared.handleMouseLeave()
+                            sm.handleMouseLeave()
                         }
                     }
                 }
@@ -264,7 +265,7 @@ public final class MouseMonitor: ObservableObject {
             
             let hasNoOverflow = overflowCount == 0
             if (prefs.hideWhenNoOverflow && hasNoOverflow) || (geom.isFullScreenSpace && !isAwakenedInFullScreen) {
-                IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+                IslandWindowCoordinator.shared.setIgnoresMouseEvents(true, for: geom.displayID)
                 return
             }
             
@@ -273,7 +274,7 @@ public final class MouseMonitor: ObservableObject {
             let paddedRect = screenRect.insetBy(dx: -4, dy: -4)
             let isInside = NSMouseInRect(location, paddedRect, false)
             
-            IslandWindowCoordinator.shared.setIgnoresMouseEvents(!isInside)
+            IslandWindowCoordinator.shared.setIgnoresMouseEvents(!isInside, for: geom.displayID)
             return
         }
         
@@ -290,9 +291,9 @@ public final class MouseMonitor: ObservableObject {
                 fullScreenGraceTimer = nil
             }
             if isExpanded {
-                IslandStateMachine.shared.triggerCollapse()
+                sm.triggerCollapse()
             }
-            IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+            IslandWindowCoordinator.shared.setIgnoresMouseEvents(true, for: geom.displayID)
             return
         }
         
@@ -310,7 +311,7 @@ public final class MouseMonitor: ObservableObject {
             let isInside = NSMouseInRect(location, interactiveRect, false)
             
             if isInside {
-                IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+                IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
                 fullScreenGraceTimer?.invalidate()
                 fullScreenGraceTimer = nil
             } else {
@@ -323,24 +324,24 @@ public final class MouseMonitor: ObservableObject {
                                 guard let self = self else { return }
                                 self.isAwakenedInFullScreen = false
                                 self.fullScreenGraceTimer = nil
-                                IslandStateMachine.shared.triggerCollapse()
-                                IslandStateMachine.shared.enterFullScreenHidden()
+                                sm.triggerCollapse()
+                                sm.enterFullScreenHidden()
                                 IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                                IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+                                IslandWindowCoordinator.shared.setIgnoresMouseEvents(true, for: geom.displayID)
                             }
                         }
                     }
                 } else {
                     if prefs.triggerMode != .click {
-                        IslandStateMachine.shared.handleMouseLeave()
+                        sm.handleMouseLeave()
                     }
                 }
             }
             return
         }
         
-        // 3. 平直屏常态未展开时，鼠标事件严格穿透底层窗口 (Ticket #44 第 2 点)
-        IslandWindowCoordinator.shared.setIgnoresMouseEvents(true)
+        // 3. 平直屏常态未展开时，鼠标事件严格穿透底层窗口 (Ticket #44 第 2 点 & #53)
+        IslandWindowCoordinator.shared.setIgnoresMouseEvents(true, for: geom.displayID)
         
         // 4. 判定当前光标是否处于外接屏目标中央热区（复用统一判定函数）
         let isInTargetHotZone = isPointInExternalTopZone(location, geometry: geom)
@@ -378,8 +379,9 @@ public final class MouseMonitor: ObservableObject {
                         }
                         
                         let currentGeom = ScreenManager.shared.geometry(for: geom.displayID) ?? geom
+                        let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID)
                         guard !currentGeom.hasPhysicalNotch,
-                              !IslandStateMachine.shared.currentState.isExpanded else { return }
+                              !targetSM.currentState.isExpanded else { return }
                         
                         let currentSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: currentGeom.displayID)
                         let currentOverflow = currentSnapshot?.overflowCount ?? 0
@@ -389,13 +391,13 @@ public final class MouseMonitor: ObservableObject {
                         let stillInZone = self.isPointInExternalTopZone(mousePos, geometry: currentGeom)
                         guard stillInZone else { return }
                         
-                        // 停留意图确立：驱动状态机展开并刷新视口
+                        // 停留意图确立：驱动外接屏独立状态机展开并刷新视口
                         if currentGeom.isFullScreenSpace {
                             self.isAwakenedInFullScreen = true
                         }
-                        IslandStateMachine.shared.triggerExpand(overflowCount: currentOverflow)
+                        targetSM.triggerExpand(overflowCount: currentOverflow)
                         IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                        IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
+                        IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: currentGeom.displayID)
                     }
                 }
             }
@@ -407,30 +409,32 @@ public final class MouseMonitor: ObservableObject {
     
     /// 处理用户在特定屏幕上的点击激活（与 ScreenManager 单一可信源直连，零缓存阻断）
     func handleClick(at location: CGPoint) {
-        // 1. 若当前灵动岛处于展开态，委托视口管理器判定并驱动收起外部点击 (Ticket #48, 消除 Feature Envy)
+        // 1. 若当前灵动岛处于展开态，委托视口管理器判定并驱动收起外部点击 (Ticket #48 & #53)
         IslandWindowCoordinator.shared.handleOutsideClickIfNeeded(at: location)
         
         // 2. 对齐 triggerMode：若配置了 click 或 hoverAndClick 模式，且点击在外接平直屏顶部中央热区，即时展开
         let prefs = PreferenceStore.shared.preferences
-        if !IslandStateMachine.shared.currentState.isExpanded &&
-           (prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick) {
+        if (prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick) {
             let screenMatch = ScreenManager.shared.allGeometries.first(where: {
                 $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
             })
             if let geom = screenMatch, !geom.hasPhysicalNotch {
-                let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
-                let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
-                if !shouldSuppress && isPointInExternalTopZone(location, geometry: geom) {
-                    if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
-                        ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+                let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID)
+                if !extSM.currentState.isExpanded {
+                    let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
+                    let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
+                    if !shouldSuppress && isPointInExternalTopZone(location, geometry: geom) {
+                        if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
+                            ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+                        }
+                        if geom.isFullScreenSpace {
+                            self.isAwakenedInFullScreen = true
+                        }
+                        extSM.triggerExpand(overflowCount: count)
+                        IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                        IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
+                        return
                     }
-                    if geom.isFullScreenSpace {
-                        self.isAwakenedInFullScreen = true
-                    }
-                    IslandStateMachine.shared.triggerExpand(overflowCount: count)
-                    IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(false)
-                    return
                 }
             }
         }

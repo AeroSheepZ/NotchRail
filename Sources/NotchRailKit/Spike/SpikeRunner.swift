@@ -468,18 +468,19 @@ public enum SpikeRunner {
         check(flatInteractiveExpanded.width > 0 && flatInteractiveExpanded.height == 84.0, "Test 19: Flat display expanded interactive bounds must match floating shelf")
         print("   ✅ Case 19 通过: 平直悬浮浮轨 (Floating Shelf) 消耳吸顶、24pt 圆角与 HUD Hit-Test 契约通过")
         
-        // Test 20: 点击外部即时收起 (Dismiss on Click Outside) 与穿透契约 (Ticket #48 & #49)
-        IslandStateMachine.shared.triggerExpand(overflowCount: 4)
-        check(IslandStateMachine.shared.currentState.isExpanded, "Test 20: Island must be expanded")
+        // Test 20: 点击外部即时收起 (Dismiss on Click Outside) 与穿透契约 (Ticket #48 & #49 & #53)
         let currentGeom = IslandWindowCoordinator.shared.currentPanelGeometry
+        let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID)
+        targetSM.triggerExpand(overflowCount: 4)
+        check(targetSM.currentState.isExpanded, "Test 20: Island must be expanded")
         let activeRect = currentGeom.interactiveScreenRect(isExpanded: true, overflowCount: 4)
         // 点击在展开区域内部：保持展开
         MouseMonitor.shared.simulateClick(at: CGPoint(x: activeRect.midX, y: activeRect.midY))
-        check(IslandStateMachine.shared.currentState.isExpanded, "Test 20: Click inside must keep expanded state")
+        check(targetSM.currentState.isExpanded, "Test 20: Click inside must keep expanded state")
         // 点击在展开区域外部：驱动即时收起
         MouseMonitor.shared.simulateClick(at: CGPoint(x: activeRect.midX, y: activeRect.minY - 100.0))
-        check(!IslandStateMachine.shared.currentState.isExpanded, "Test 20: Click outside must trigger collapse")
-        check(IslandStateMachine.shared.currentState == .compact, "Test 20: State must return to compact")
+        check(!targetSM.currentState.isExpanded, "Test 20: Click outside must trigger collapse")
+        check(targetSM.currentState == .compact, "Test 20: State must return to compact")
         print("   ✅ Case 20 通过: 点击外部即时收起 (Dismiss on Click Outside) 与穿透状态机自愈契约通过")
         
         // Test 21: Smart Heartbeat 状态流转与静态图元零重绘契约 (Ticket 1 #51)
@@ -519,5 +520,27 @@ public enum SpikeRunner {
         let initialEntries = await axResolver.latestEntries()
         check(initialEntries.count >= 0, "Test 22: latestEntries after invalidate must succeed")
         print("   ✅ Case 22 通过: 批量窗口描述单次 IPC 提取与 AX 事件驱动缓存契约通过")
+        
+        // Test 23: 双屏多实例独立面板与隔离状态机契约 (Ticket 3 #53)
+        let primaryGeom = ScreenManager.shared.primaryGeometry
+        let primarySM = coordinator.stateMachine(for: primaryGeom.displayID)
+        let extGeomMock = ScreenManager.shared.allGeometries.first(where: { !$0.hasPhysicalNotch && !$0.isBuiltIn })
+        if let extGeom = extGeomMock {
+            let extSM = coordinator.stateMachine(for: extGeom.displayID)
+            check(primarySM !== extSM, "Test 23: Primary and external state machines must be distinct instances")
+            
+            primarySM.triggerExpand(overflowCount: 3)
+            check(primarySM.currentState.isExpanded, "Test 23: Primary island must be expanded")
+            check(!extSM.currentState.isExpanded, "Test 23: External island must remain collapsed when primary expands")
+            
+            primarySM.triggerCollapse()
+            check(primarySM.currentState == .compact, "Test 23: Primary island must collapse")
+            
+            extSM.triggerExpand(overflowCount: 2)
+            check(extSM.currentState.isExpanded, "Test 23: External island must be expanded")
+            check(!primarySM.currentState.isExpanded, "Test 23: Primary island must remain compact when external expands")
+            extSM.triggerCollapse()
+        }
+        print("   ✅ Case 23 通过: 双屏独立面板生命周期与状态机物理隔离契约通过")
     }
 }

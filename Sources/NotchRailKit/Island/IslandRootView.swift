@@ -3,18 +3,25 @@ import AppKit
 
 /// 灵动岛根视图容器：基于单一流体底座（Morphing Base）驱动 Apple 级弹簧变形与分层级联入场
 public struct IslandRootView: View {
-    @ObservedObject var windowCoordinator = IslandWindowCoordinator.shared
+    public let displayID: CGDirectDisplayID
+    @ObservedObject public var stateMachine: IslandStateMachine
     @ObservedObject var screenManager = ScreenManager.shared
-    @ObservedObject var stateMachine = IslandStateMachine.shared
     @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject private var iconResolver = IconResolver.shared
     
-    public init() {}
+    public init(
+        displayID: CGDirectDisplayID? = nil,
+        stateMachine: IslandStateMachine? = nil
+    ) {
+        let actualDisplayID = displayID ?? ScreenManager.shared.primaryGeometry.displayID
+        self.displayID = actualDisplayID
+        self.stateMachine = stateMachine ?? IslandStateMachine.shared
+    }
     
     public var body: some View {
-        // 严格以当前物理 Panel 锚定的屏幕几何为单一真实来源 (Ticket #46 & #47)
-        let geometry = windowCoordinator.currentPanelGeometry
+        // 严格以当前物理 Panel 锚定的屏幕几何为单一真实来源 (Ticket #46 & #47 & #53)
+        let geometry = screenManager.geometry(for: displayID) ?? screenManager.primaryGeometry
         
         let targetSnapshot = syncCoordinator.effectiveSnapshot(for: geometry.displayID)
         let isSyncing = syncCoordinator.isPrewarming || (targetSnapshot == nil)
@@ -141,9 +148,9 @@ public struct IslandRootView: View {
         guard prefs.triggerMode == .hover || prefs.triggerMode == .hoverAndClick else { return }
         
         if isHovered {
-            IslandStateMachine.shared.handleMouseEnter(overflowCount: overflowCount)
+            stateMachine.handleMouseEnter(overflowCount: overflowCount)
         } else {
-            IslandStateMachine.shared.handleMouseLeave()
+            stateMachine.handleMouseLeave()
         }
     }
     
@@ -153,8 +160,8 @@ public struct IslandRootView: View {
         // 允许 click 与 hoverAndClick 模式触发紧凑胶囊点击即时展开（展开态由外部点击或图标点击独立处理，避免劫持图标手势）
         guard prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick else { return }
         
-        if !IslandStateMachine.shared.currentState.isExpanded {
-            IslandStateMachine.shared.triggerExpand(overflowCount: overflowCount)
+        if !stateMachine.currentState.isExpanded {
+            stateMachine.triggerExpand(overflowCount: overflowCount)
         }
     }
     
@@ -163,7 +170,7 @@ public struct IslandRootView: View {
         switch clickResult {
         case .success:
             if preferenceStore.preferences.autoCollapseOnClick {
-                IslandStateMachine.shared.triggerCollapse()
+                stateMachine.triggerCollapse()
             }
             return true
         case .failure:
