@@ -23,9 +23,9 @@ public actor MenuBarAXResolver {
 
     private init() {}
 
-    /// 获取最新的所有运行应用的菜单栏 Extra 空间映射表（带 120 秒长缓存，由生命周期事件定向失效，Issue #52）
+    /// 获取最新的所有运行应用的菜单栏 Extra 空间映射表（带 2.0 秒自愈缓存）
     public func latestEntries() -> [Entry] {
-        if let last = lastScanDate, Date().timeIntervalSince(last) < 120.0, !cachedEntries.isEmpty {
+        if let last = lastScanDate, Date().timeIntervalSince(last) < 2.0, !cachedEntries.isEmpty {
             return cachedEntries
         }
         let entries = performAXScan()
@@ -176,8 +176,12 @@ public actor MenuBarAXResolver {
         let ownPID = getpid()
         let now = Date()
 
-        // 1. 仅在已知候选池为空时（应用冷启动首次），执行一次带子进程过滤的快速全量初始化发现 (Issue #52)
-        if knownMenuBarPIDs.isEmpty {
+        // 1. 若已知池为空，或距上次全量发现超过 60 秒，执行一次带子进程过滤的快速发现
+        let shouldRunFullDiscovery = knownMenuBarPIDs.isEmpty ||
+            lastFullDiscoveryDate == nil ||
+            now.timeIntervalSince(lastFullDiscoveryDate!) > 60.0
+
+        if shouldRunFullDiscovery {
             discoverMenuBarPIDs()
             lastFullDiscoveryDate = now
         }

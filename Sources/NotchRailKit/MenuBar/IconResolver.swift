@@ -62,10 +62,11 @@ public final class IconResolver: ObservableObject {
 
     /// 捕获成功的图像缓存（iconCacheKey → 带真实倍率的截图）
     private var cache: [String: CapturedIcon] = [:]
+    /// 全局真实应用程序图元注册表（bundleIdentifier → 带真实倍率的原生位图资产）
+    /// 纯物理双轨解耦：任一激活屏幕成功光栅化捕获，即登记入库；非激活屏幕直接按确凿 Bundle ID 取图
+    private var appAssetVault: [String: CapturedIcon] = [:]
     /// 跨窗口生命周期的稳定应用图元二级缓存（persistentKey → 带真实倍率的截图）
     private var persistentCache: [String: CapturedIcon] = [:]
-    /// 记录各项上一次原始捕获的签名特征，用于静态图元零重绘 Dirty-Check (Issue #51)
-    private var rawSignatures: [String: RawCaptureSignature] = [:]
     /// LRU 访问顺序（从最旧到最新）
     private var accessOrder: [String] = []
     /// 失败计数（含最后失败时间，用于冷却判定）
@@ -76,14 +77,6 @@ public final class IconResolver: ObservableObject {
     private struct FailedCapture {
         var failureCount: Int
         var lastFailureTime: Date
-    }
-
-    /// 原始窗口位图特征签名（用于极速比对位图是否发生任何变动）
-    public struct RawCaptureSignature: Equatable, Sendable {
-        public let boundsWidth: CGFloat
-        public let pixelWidth: Int
-        public let pixelHeight: Int
-        public let dataHash: Int
     }
 
     /// 捕获成功的图像（CGImage + 捕获时的真实倍率）
@@ -110,9 +103,9 @@ public final class IconResolver: ObservableObject {
             case (nil, nil):
                 return true
             case let (old?, new?):
+                guard old.scale == new.scale else { return false }
                 if old.cgImage === new.cgImage { return true }
-                guard old.scale == new.scale,
-                      old.cgImage.width == new.cgImage.width,
+                guard old.cgImage.width == new.cgImage.width,
                       old.cgImage.height == new.cgImage.height
                 else { return false }
                 guard let oldData = old.cgImage.dataProvider?.data,
@@ -128,8 +121,8 @@ public final class IconResolver: ObservableObject {
     /// 单次捕获管线的结果（按 iconCacheKey 索引）
     private struct CaptureResult {
         var images: [String: CapturedIcon] = [:]
-        var signatures: [String: RawCaptureSignature] = [:]
         var failedKeys: Set<String> = []
+        var transparentKeys: Set<String> = []
     }
 
     // MARK: - 初始化
@@ -145,38 +138,66 @@ public final class IconResolver: ObservableObject {
     // MARK: - 主解析入口
 
     /// 批量解析菜单栏项图标（内存已有项 0ms 瞬间直出，后台通过 isVisuallyEqual 动态增量比对实时刷新三方数值）
-    public func resolveIcons(for items: [MenuBarItem]) async {
+    public func resolveIcons(for items: [MenuBarItem], forceRefresh: Bool = false) async {
         guard !items.isEmpty else { return }
 
         // 1. 已有内存缓存的项先置为 loaded 状态（0ms 瞬间直出，彻底杜绝空白占位）
+        var updatedStates = iconStates
+        var initialChanged = false
         for item in items {
             let key = item.iconCacheKey
-            if let cached = cache[key] ?? persistentCache[item.persistentKey] {
+            let cached = cache[key]
+                ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
+                ?? persistentCache[item.persistentKey]
+            if let cached = cached {
                 if cache[key] == nil {
                     cache[key] = cached
                     touchAccessOrder(for: key)
                 }
-                iconStates[key] = .loaded(cached.nsImage)
+                let isAlreadyLoaded: Bool = {
+                    if case .loaded = updatedStates[key] { return true }
+                    return false
+                }()
+                if !isAlreadyLoaded {
+                    updatedStates[key] = .loaded(cached.nsImage)
+                    initialChanged = true
+                }
             }
+        }
+        if initialChanged {
+            iconStates = updatedStates
         }
 
         // 2. 未授权屏幕录制时直接返回
         guard CGPreflightScreenCaptureAccess() else { return }
 
-        // 3. 获取失败冷却黑名单并执行后台捕获管线（支持静态零重绘与动态像素比对）
+        // 3. 增量缓存直出旁路过滤：静默休眠态下跳过已有位图的项，杜绝切屏获焦时重复截图
+        let itemsToCapture: [MenuBarItem]
+        if forceRefresh || MenuBarSyncCoordinator.shared.heartbeatState == .active {
+            // 显式全量重扫或灵动岛展开活跃心跳态：全量捕获以比对动态数值（网速、时钟等）
+            itemsToCapture = items
+        } else {
+            // 静默休眠态：仅对内存与应用资产库中完全没有有效位图的新发现项发起系统截图
+            itemsToCapture = items.filter { item in
+                let key = item.iconCacheKey
+                let hasVault = item.bundleIdentifier.flatMap { appAssetVault[$0] } != nil
+                return cache[key] == nil && !hasVault && persistentCache[item.persistentKey] == nil
+            }
+        }
+        guard !itemsToCapture.isEmpty else { return }
+
+        // 4. 获取失败冷却黑名单并执行后台捕获管线
         let blacklisted = currentlyBlacklistedKeys()
         let result = await Self.capturePipeline(
-            items,
-            blacklistedKeys: blacklisted,
-            cachedIcons: cache,
-            signatures: rawSignatures
+            itemsToCapture,
+            blacklistedKeys: blacklisted
         )
-        apply(result, to: items)
+        apply(result, to: itemsToCapture)
     }
 
     /// 兼容旧调用方的同步快照式 API
     public func resolveIconsSnapshot(for items: [MenuBarItem]) async -> [UUID: ResolvedIcon] {
-        await resolveIcons(for: items)
+        await resolveIcons(for: items, forceRefresh: true)
         var result: [UUID: ResolvedIcon] = [:]
         for item in items {
             switch iconStates[item.iconCacheKey] {
@@ -197,61 +218,102 @@ public final class IconResolver: ObservableObject {
 
     private func apply(_ result: CaptureResult, to items: [MenuBarItem]) {
         var statesChanged = false
+        var updatedStates = iconStates
 
         for item in items {
             let key = item.iconCacheKey
             if let icon = result.images[key] {
-                if let sig = result.signatures[key] {
-                    rawSignatures[key] = sig
-                }
                 // 视觉相等且已发布 loaded 态 → 不更新（不触发重渲染）
                 let isAlreadyLoaded: Bool = {
-                    if case .loaded = iconStates[key] { return true }
+                    if case .loaded = updatedStates[key] { return true }
                     return false
                 }()
-                if !CapturedIcon.isVisuallyEqual(cache[key], icon) || !isAlreadyLoaded {
+                let existingIcon = cache[key]
+                if !CapturedIcon.isVisuallyEqual(existingIcon, icon) || !isAlreadyLoaded {
                     cache[key] = icon
                     persistentCache[item.persistentKey] = icon
-                    iconStates[key] = .loaded(icon.nsImage)
+                    if let bundleID = item.bundleIdentifier, !bundleID.isEmpty {
+                        appAssetVault[bundleID] = icon
+                    }
+                    updatedStates[key] = .loaded(icon.nsImage)
                     touchAccessOrder(for: key)
                     statesChanged = true
                 }
                 // 捕获成功 → 重置失败计数
                 failedCaptures.removeValue(forKey: key)
                 failedCaptures.removeValue(forKey: item.persistentKey)
+            } else if result.transparentKeys.contains(key) {
+                // 非激活屏全透明省电特性保护：
+                // 1. 若本项此前已捕获有效真实位图，或应用资产注册表中已登记该应用的真实位图，直接直出
+                let existing = cache[key]
+                    ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
+                    ?? persistentCache[item.persistentKey]
+                if let existing = existing {
+                    if cache[key] == nil {
+                        cache[key] = existing
+                        touchAccessOrder(for: key)
+                    }
+                    let isAlreadyLoaded: Bool = {
+                        if case .loaded = updatedStates[key] { return true }
+                        return false
+                    }()
+                    if !isAlreadyLoaded {
+                        updatedStates[key] = .loaded(existing.nsImage)
+                        statesChanged = true
+                    }
+                    // 本地已有真实位图，严禁记录失败或拉黑
+                    failedCaptures.removeValue(forKey: key)
+                    failedCaptures.removeValue(forKey: item.persistentKey)
+                }
+                // 2. 若冷启动尚未截到位图，保持原态（如 .pending），绝不记录失败，杜绝误入黑名单
             } else if result.failedKeys.contains(key) {
-                rawSignatures.removeValue(forKey: key)
-                // 若该项截图失败（如处于离屏或副屏透明窗口），优先复用此前捕获成功的真实位图
-                if let fallback = persistentCache[item.persistentKey] {
+                // 真正系统调用失败或窗口已销毁
+                let fallback = cache[key]
+                    ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
+                    ?? persistentCache[item.persistentKey]
+                if let fallback = fallback {
                     if cache[key] == nil {
                         cache[key] = fallback
                         touchAccessOrder(for: key)
                     }
-                    if iconStates[key] == nil || iconStates[key] == .pending {
-                        iconStates[key] = .loaded(fallback.nsImage)
+                    let isAlreadyLoaded: Bool = {
+                        if case .loaded = updatedStates[key] { return true }
+                        return false
+                    }()
+                    if !isAlreadyLoaded {
+                        updatedStates[key] = .loaded(fallback.nsImage)
                         statesChanged = true
                     }
+                    failedCaptures.removeValue(forKey: key)
                 } else {
                     recordFailure(for: key)
-                    if iconStates[key] == nil || iconStates[key] == .pending {
-                        iconStates[key] = .failed
+                    if updatedStates[key] == nil || updatedStates[key] == .pending {
+                        updatedStates[key] = .failed
                         statesChanged = true
                     }
                 }
             } else {
-                // 被黑名单冷却跳过或无有效窗口 bounds：优先复用真实持久缓存，绝不轻易回退至空白占位
-                if let fallback = persistentCache[item.persistentKey] {
+                // 被黑名单冷却跳过或无有效窗口 bounds
+                let fallback = cache[key]
+                    ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
+                    ?? persistentCache[item.persistentKey]
+                if let fallback = fallback {
                     if cache[key] == nil {
                         cache[key] = fallback
                         touchAccessOrder(for: key)
                     }
-                    if iconStates[key] == nil || iconStates[key] == .pending {
-                        iconStates[key] = .loaded(fallback.nsImage)
+                    let isAlreadyLoaded: Bool = {
+                        if case .loaded = updatedStates[key] { return true }
+                        return false
+                    }()
+                    if !isAlreadyLoaded {
+                        updatedStates[key] = .loaded(fallback.nsImage)
                         statesChanged = true
                     }
+                    failedCaptures.removeValue(forKey: key)
                 } else {
-                    if iconStates[key] == nil || iconStates[key] == .pending {
-                        iconStates[key] = .failed
+                    if updatedStates[key] == nil || updatedStates[key] == .pending {
+                        updatedStates[key] = .failed
                         statesChanged = true
                     }
                 }
@@ -259,6 +321,7 @@ public final class IconResolver: ObservableObject {
         }
 
         if statesChanged {
+            iconStates = updatedStates
             evictIfNeeded()
         }
     }
@@ -336,14 +399,12 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 捕获管线（后台线程执行）
 
-    /// 纯函数式捕获管线：直接逐窗高精度截图 → 签名 Dirty-Check → 静态零重绘 → scale 校验 → 自动裁剪
+    /// 纯函数式捕获管线：直接逐窗高精度截图 → 自动裁剪透明边距 → scale 校验
     ///
     /// nonisolated + async → 自动运行在全局并发执行器，不阻塞 MainActor
     private nonisolated static func capturePipeline(
         _ items: [MenuBarItem],
-        blacklistedKeys: Set<String>,
-        cachedIcons: [String: CapturedIcon],
-        signatures: [String: RawCaptureSignature]
+        blacklistedKeys: Set<String>
     ) async -> CaptureResult {
         var result = CaptureResult()
 
@@ -360,48 +421,25 @@ public final class IconResolver: ObservableObject {
             return result
         }
 
-        // 2. 逐窗进行原生真实菜单栏截图与零重绘比对 (Issue #51)
+        // 2. 逐窗进行原生真实菜单栏截图与透明裁剪
         for entry in entries {
             let key = entry.item.iconCacheKey
-            guard let image = Bridging.captureWindow(entry.item.windowID),
-                  image.width > 0, image.height > 0
-            else {
-                result.failedKeys.insert(key)
+
+            let image = Bridging.captureWindow(entry.item.windowID)
+            let trimmed = (image != nil && image!.width > 0 && image!.height > 0) ? image!.trimmingTransparentPixels() : nil
+
+            guard let finalImage = image, let finalTrimmed = trimmed else {
+                if image != nil {
+                    result.transparentKeys.insert(key)
+                } else {
+                    result.failedKeys.insert(key)
+                }
                 continue
             }
-            
-            // 快速计算原始像素数据的哈希（微秒级）
-            let dataHash: Int
-            if let data = image.dataProvider?.data {
-                dataHash = (data as Data).hashValue
-            } else {
-                dataHash = 0
-            }
-            
-            let currentSig = RawCaptureSignature(
-                boundsWidth: entry.bounds.width,
-                pixelWidth: image.width,
-                pixelHeight: image.height,
-                dataHash: dataHash
-            )
-            
-            // 静态图元零重绘校验 (Zero-Recrop): 若原始图像签名未变且已有有效缓存，直接复用旧图，彻底跳过重绘裁剪
-            if let lastSig = signatures[key], lastSig == currentSig, let existingIcon = cachedIcons[key] {
-                result.images[key] = existingIcon
-                result.signatures[key] = currentSig
-                continue
-            }
-            
-            // 自动裁剪透明边距并归一化倍率（若全透明无可见像素则返回 nil 标记失败，彻底消除冗余 isFullyTransparent）
-            guard let trimmed = image.trimmingTransparentPixels() else {
-                result.failedKeys.insert(key)
-                continue
-            }
-            
-            let rawScale = CGFloat(image.width) / max(1, entry.bounds.width)
+
+            let rawScale = CGFloat(finalImage.width) / max(1, entry.bounds.width)
             let scale = validatedScale(rawScale) ?? max(1.0, rawScale.rounded())
-            result.images[key] = CapturedIcon(cgImage: trimmed, scale: scale)
-            result.signatures[key] = currentSig
+            result.images[key] = CapturedIcon(cgImage: finalTrimmed, scale: scale)
         }
 
         return result
@@ -427,6 +465,9 @@ public final class IconResolver: ObservableObject {
         if let cached = cache[item.iconCacheKey] {
             return cached.nsImage
         }
+        if let bundleID = item.bundleIdentifier, let appIcon = appAssetVault[bundleID] {
+            return appIcon.nsImage
+        }
         if let persistent = persistentCache[item.persistentKey] {
             return persistent.nsImage
         }
@@ -436,8 +477,8 @@ public final class IconResolver: ObservableObject {
     /// 清空内存缓存（偏好设置变更时调用）
     public func clearCache() {
         cache.removeAll()
+        appAssetVault.removeAll()
         persistentCache.removeAll()
-        rawSignatures.removeAll()
         accessOrder.removeAll()
         failedCaptures.removeAll()
         iconStates.removeAll()
@@ -489,11 +530,6 @@ extension CGImage {
         else { return nil }
         context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage()
-    }
-
-    /// 是否整张图全透明且无任何可见色彩内容（兼容 RGBA 与 XRGB 格式）
-    nonisolated var isFullyTransparent: Bool {
-        return trimmingTransparentPixels() == nil
     }
 
     /// 自动裁剪边缘全透明像素；若整图全透明无可见像素，直接返回 nil (Issue #51)

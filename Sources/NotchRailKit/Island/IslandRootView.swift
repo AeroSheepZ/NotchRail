@@ -20,9 +20,14 @@ public struct IslandRootView: View {
     }
     
     public var body: some View {
-        // 严格以当前物理 Panel 锚定的屏幕几何为单一真实来源 (Ticket #46 & #47 & #53)
-        let geometry = screenManager.geometry(for: displayID) ?? screenManager.primaryGeometry
-        
+        // 严格以当前物理 Panel 锚定的屏幕几何为单一真实来源，严禁跨屏借调兜底 (AGENTS.md 2.1)
+        if let geometry = screenManager.geometry(for: displayID) {
+            contentView(for: geometry)
+        }
+    }
+    
+    @ViewBuilder
+    private func contentView(for geometry: NotchGeometry) -> some View {
         let targetSnapshot = syncCoordinator.effectiveSnapshot(for: geometry.displayID)
         let isSyncing = syncCoordinator.isPrewarming || (targetSnapshot == nil)
         let overflowItems = targetSnapshot?.overflowItems ?? []

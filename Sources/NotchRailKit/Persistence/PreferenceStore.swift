@@ -100,11 +100,6 @@ public final class PreferenceStore: ObservableObject {
         }
     }
     
-    /// 手动添加忽略特定 Bundle ID
-    public func addIgnored(bundleID: String) {
-        hideItem(bundleID)
-    }
-    
     /// 清空所有黑名单忽略应用
     public func clearAllIgnored() {
         update { prefs in
@@ -125,13 +120,6 @@ public final class PreferenceStore: ObservableObject {
     public func resetCustomItemOrder() {
         update { prefs in
             prefs.customItemOrder.removeAll()
-        }
-    }
-    
-    /// 调整两个相邻位置或在列表中移动
-    public func moveCustomItem(fromOffsets: IndexSet, toOffset: Int) {
-        update { prefs in
-            prefs.customItemOrder.move(fromOffsets: fromOffsets, toOffset: toOffset)
         }
     }
 }

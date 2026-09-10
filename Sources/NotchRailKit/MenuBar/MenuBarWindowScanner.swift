@@ -79,8 +79,9 @@ public actor MenuBarWindowScanner {
             return (title, axEntry.bundleIdentifier)
         }
 
-        // 4. 次选：通过 WindowServer 标题中的 Bundle ID 反查
-        if windowTitle.hasPrefix("com.") || windowTitle.hasPrefix("org.") || windowTitle.hasPrefix("io.") || windowTitle.hasPrefix("net.") {
+        // 4. 次选：通过 WindowServer 标题中的 Bundle ID 反查（支持 com./org./io./net. 以及 notion.id 等反向域名）
+        let looksLikeBundleID = (windowTitle.hasPrefix("com.") || windowTitle.hasPrefix("org.") || windowTitle.hasPrefix("io.") || windowTitle.hasPrefix("net.") || windowTitle.contains(".")) && !windowTitle.contains(" ") && !windowTitle.hasPrefix("Item-")
+        if looksLikeBundleID {
             let locName = localizedAppName(forBundleID: windowTitle) ?? windowTitle
             return (locName, windowTitle)
         }

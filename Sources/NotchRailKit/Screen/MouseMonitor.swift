@@ -146,15 +146,19 @@ public final class MouseMonitor: ObservableObject {
         
         let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
         let overflowCount = targetSnapshot?.overflowCount ?? 0
-        let sm = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID)
+        guard let sm = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else {
+            cancelExternalDwellTimer()
+            return
+        }
         let isExpanded = sm.currentState.isExpanded
         
         // 快速熔断与触顶预热调度 (Issue #51)
         if !isExpanded && !isAwakenedInFullScreen {
             let topZoneThreshold = geom.screenFrame.maxY - (geom.statusBarHeight + 60.0)
             if location.y < topZoneThreshold {
-                // 光标处于屏幕中下部工作区，直接熔断退出，避免后续碰撞与几何运算
+                // 光标处于屏幕中下部工作区，直接熔断退出，撤销预热警戒态，避免后续碰撞与几何运算
                 cancelExternalDwellTimer()
+                MenuBarSyncCoordinator.shared.disarmPrewarm()
                 return
             }
             
@@ -379,8 +383,8 @@ public final class MouseMonitor: ObservableObject {
                         }
                         
                         let currentGeom = ScreenManager.shared.geometry(for: geom.displayID) ?? geom
-                        let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID)
-                        guard !currentGeom.hasPhysicalNotch,
+                        guard let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID),
+                              !currentGeom.hasPhysicalNotch,
                               !targetSM.currentState.isExpanded else { return }
                         
                         let currentSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: currentGeom.displayID)
@@ -419,7 +423,7 @@ public final class MouseMonitor: ObservableObject {
                 $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
             })
             if let geom = screenMatch, !geom.hasPhysicalNotch {
-                let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID)
+                guard let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
                 if !extSM.currentState.isExpanded {
                     let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
                     let shouldSuppress = prefs.hideWhenNoOverflow && count == 0

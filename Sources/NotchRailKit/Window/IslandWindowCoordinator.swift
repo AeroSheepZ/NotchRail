@@ -83,24 +83,24 @@ public final class IslandWindowCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
     
-    /// 根据显示器 ID 获取对应的独立状态机 (Issue #53)
-    public func stateMachine(for displayID: CGDirectDisplayID) -> IslandStateMachine {
+    /// 根据显示器 ID 获取对应的独立状态机 (Fail-Fast，未命中返回 nil，严禁跨屏借用兜底)
+    public func stateMachine(for displayID: CGDirectDisplayID) -> IslandStateMachine? {
         let allGeoms = ScreenManager.shared.allGeometries
-        if let geom = allGeoms.first(where: { $0.displayID == displayID }) {
-            return geom.hasPhysicalNotch ? primaryStateMachine : externalStateMachine
+        guard let geom = allGeoms.first(where: { $0.displayID == displayID }) else {
+            return nil
         }
-        let primary = ScreenManager.shared.primaryGeometry
-        return displayID == primary.displayID && primary.hasPhysicalNotch ? primaryStateMachine : externalStateMachine
+        let isPrimary = geom.hasPhysicalNotch || geom.isBuiltIn || geom.displayID == ScreenManager.shared.primaryGeometry.displayID
+        return isPrimary ? primaryStateMachine : externalStateMachine
     }
     
-    /// 根据显示器 ID 获取对应的 IslandPanel 实例 (Issue #53)
+    /// 根据显示器 ID 获取对应的 IslandPanel 实例 (Fail-Fast，未命中返回 nil，严禁跨屏借用兜底)
     public func panel(for displayID: CGDirectDisplayID) -> IslandPanel? {
         let allGeoms = ScreenManager.shared.allGeometries
-        if let geom = allGeoms.first(where: { $0.displayID == displayID }) {
-            return geom.hasPhysicalNotch ? primaryPanel : externalPanel
+        guard let geom = allGeoms.first(where: { $0.displayID == displayID }) else {
+            return nil
         }
-        let primary = ScreenManager.shared.primaryGeometry
-        return displayID == primary.displayID && primary.hasPhysicalNotch ? primaryPanel : externalPanel
+        let isPrimary = geom.hasPhysicalNotch || geom.isBuiltIn || geom.displayID == ScreenManager.shared.primaryGeometry.displayID
+        return isPrimary ? primaryPanel : externalPanel
     }
     
     /// 创建并装载绑定指定显示器与状态机的 IslandPanel 实例 (Issue #53)
@@ -136,17 +136,17 @@ public final class IslandWindowCoordinator: ObservableObject {
     
     /// 动态设置指定物理窗口的鼠标事件穿透性 (Issue #53)
     public func setIgnoresMouseEvents(_ ignores: Bool, for displayID: CGDirectDisplayID? = nil) {
-        if let did = displayID, let targetPanel = panel(for: did) {
+        if let targetDisplayID = displayID, let targetPanel = panel(for: targetDisplayID) {
             if targetPanel.ignoresMouseEvents != ignores {
                 targetPanel.ignoresMouseEvents = ignores
             }
         } else {
             // 未指定则同步主副屏
-            if let p = primaryPanel, p.ignoresMouseEvents != ignores {
-                p.ignoresMouseEvents = ignores
+            if let primary = primaryPanel, primary.ignoresMouseEvents != ignores {
+                primary.ignoresMouseEvents = ignores
             }
-            if let e = externalPanel, e.ignoresMouseEvents != ignores {
-                e.ignoresMouseEvents = ignores
+            if let external = externalPanel, external.ignoresMouseEvents != ignores {
+                external.ignoresMouseEvents = ignores
             }
         }
     }
@@ -157,81 +157,82 @@ public final class IslandWindowCoordinator: ObservableObject {
         let allGeoms = ScreenManager.shared.allGeometries
         self.currentPanelGeometry = ScreenManager.shared.currentGeometry
         
-        // -------------------------------------------------------------
-        // 1. MacBook 物理刘海屏主面板生命周期管理 (Primary Panel)
-        // -------------------------------------------------------------
-        let physicalGeom = allGeoms.first(where: { $0.hasPhysicalNotch })
-        if let geom = physicalGeom {
-            // 开盖正常模式：确保主面板存在并常驻守护物理刘海屏
-            let targetPanel: IslandPanel
-            if let existing = primaryPanel {
-                targetPanel = existing
-            } else {
-                let created = createPanel(for: geom, stateMachine: primaryStateMachine)
-                self.primaryPanel = created
-                targetPanel = created
-            }
-            
-            let viewport = calculateViewportBounds(for: geom)
-            let snapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
-            let overflowCount = snapshot?.overflowCount ?? 0
-            let isExpanded = primaryStateMachine.currentState.isExpanded
-            let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && overflowCount == 0 && !isExpanded
-            let isFullScreenHidden = primaryStateMachine.currentState.isFullScreenHidden ||
-                                    (geom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
-            
-            if isFullScreenHidden || shouldHideForNoOverflow {
-                targetPanel.ignoresMouseEvents = true
-                updatePanelViewport(targetPanel, targetViewport: viewport, targetAlpha: 0.0, duration: 0.20)
-            } else {
-                targetPanel.ignoresMouseEvents = false
-                targetPanel.orderFrontRegardless()
-                updatePanelViewport(targetPanel, targetViewport: viewport, targetAlpha: 1.0, duration: 0.18)
-            }
-        } else {
-            // 合盖模式 (Clamshell Mode)：无物理刘海屏，彻底隐藏/注销主面板
-            primaryPanel?.orderOut(nil)
-            primaryPanel = nil
+        // 1. 主屏面板生命周期管理 (内置屏或物理刘海屏；单屏环境为主屏幕)
+        let primaryGeom = allGeoms.first(where: { $0.hasPhysicalNotch || $0.isBuiltIn }) ?? allGeoms.first
+        let hidePrimaryWhenCollapsed = primaryGeom.map { !$0.hasPhysicalNotch } ?? false
+        updatePanelLifecycle(
+            panelRef: &primaryPanel,
+            geometry: primaryGeom,
+            stateMachine: primaryStateMachine,
+            hideWhenCollapsed: hidePrimaryWhenCollapsed,
+            prefs: prefs
+        )
+        
+        // 2. 外接平直显示器副面板生命周期管理 (External Panel)
+        let externalGeom = allGeoms.first(where: { $0.displayID != primaryGeom?.displayID })
+        let allowsExternal = (prefs.externalDisplayMode != .mainScreenOnly && prefs.externalDisplayMode != .disabled)
+        let effectiveExternalGeom = allowsExternal ? externalGeom : nil
+        if !allowsExternal, let extGeom = externalGeom {
+            MenuBarSyncCoordinator.shared.setExpansionState(isExpanded: false, for: extGeom.displayID)
+        }
+        updatePanelLifecycle(
+            panelRef: &externalPanel,
+            geometry: effectiveExternalGeom,
+            stateMachine: externalStateMachine,
+            hideWhenCollapsed: true,
+            prefs: prefs
+        )
+    }
+    
+    /// 统一驱动单个屏幕面板的生命周期、视口与透明度过渡 (消除主副屏重复镜像代码)
+    private func updatePanelLifecycle(
+        panelRef: inout IslandPanel?,
+        geometry: NotchGeometry?,
+        stateMachine: IslandStateMachine,
+        hideWhenCollapsed: Bool,
+        prefs: UserPreferences
+    ) {
+        guard let geom = geometry else {
+            panelRef?.orderOut(nil)
+            panelRef = nil
+            return
         }
         
-        // -------------------------------------------------------------
-        // 2. 外接平直显示器副面板生命周期管理 (External Panel)
-        // -------------------------------------------------------------
-        let externalGeom = allGeoms.first(where: { !$0.hasPhysicalNotch && !$0.isBuiltIn })
-        let allowsExternal = (prefs.externalDisplayMode != .mainScreenOnly && prefs.externalDisplayMode != .disabled)
-        
-        if let geom = externalGeom, allowsExternal {
-            // 连接了外接平直显示器且偏好允许：确保副面板独立存在
-            let targetPanel: IslandPanel
-            if let existing = externalPanel {
-                targetPanel = existing
-            } else {
-                let created = createPanel(for: geom, stateMachine: externalStateMachine)
-                self.externalPanel = created
-                targetPanel = created
-            }
-            
-            let viewport = calculateViewportBounds(for: geom)
-            let isExpanded = externalStateMachine.currentState.isExpanded
-            let snapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
-            let overflowCount = snapshot?.overflowCount ?? 0
-            let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && overflowCount == 0 && !isExpanded
-            let isFullScreenHidden = externalStateMachine.currentState.isFullScreenHidden ||
-                                    (geom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
-            
-            // 外接平直屏规范：折叠常态 100% 隐形 (alpha = 0.0) 且鼠标 100% 物理直通底层窗口
-            if isFullScreenHidden || shouldHideForNoOverflow || !isExpanded {
-                targetPanel.ignoresMouseEvents = true
-                updatePanelViewport(targetPanel, targetViewport: viewport, targetAlpha: 0.0, duration: 0.20)
-            } else {
-                targetPanel.ignoresMouseEvents = false
-                targetPanel.orderFrontRegardless()
-                updatePanelViewport(targetPanel, targetViewport: viewport, targetAlpha: 1.0, duration: 0.18)
-            }
+        let targetPanel: IslandPanel
+        if let existing = panelRef {
+            targetPanel = existing
         } else {
-            // 未连接外接平直屏或偏好禁用外接屏：彻底隐藏并清理副面板
-            externalPanel?.orderOut(nil)
-            externalPanel = nil
+            let created = createPanel(for: geom, stateMachine: stateMachine)
+            panelRef = created
+            targetPanel = created
+        }
+        
+        let viewport = calculateViewportBounds(for: geom)
+        let snapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)
+        let overflowCount = snapshot?.overflowCount ?? 0
+        let isExpanded = stateMachine.currentState.isExpanded
+        
+        if isExpanded, ScreenManager.shared.currentGeometry.displayID != geom.displayID {
+            if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
+                ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+            }
+        }
+        
+        // 同步对应屏幕展开状态至心跳聚合器
+        MenuBarSyncCoordinator.shared.setExpansionState(isExpanded: isExpanded, for: geom.displayID)
+        
+        let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && overflowCount == 0 && !isExpanded
+        let isFullScreenHidden = stateMachine.currentState.isFullScreenHidden ||
+                                (geom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
+        let isHidden = isFullScreenHidden || shouldHideForNoOverflow || (hideWhenCollapsed && !isExpanded)
+        
+        if isHidden {
+            targetPanel.ignoresMouseEvents = true
+            updatePanelViewport(targetPanel, targetViewport: viewport, targetAlpha: 0.0, duration: 0.20)
+        } else {
+            targetPanel.ignoresMouseEvents = false
+            targetPanel.orderFrontRegardless()
+            updatePanelViewport(targetPanel, targetViewport: viewport, targetAlpha: 1.0, duration: 0.18)
         }
     }
     
@@ -259,7 +260,7 @@ public final class IslandWindowCoordinator: ObservableObject {
         guard let geom = allGeoms.first(where: { $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location) }) else {
             return
         }
-        let sm = stateMachine(for: geom.displayID)
+        guard let sm = stateMachine(for: geom.displayID) else { return }
         guard sm.currentState.isExpanded else { return }
         
         let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)

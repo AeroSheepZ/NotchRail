@@ -91,17 +91,21 @@ NotchRail/
 
 ### 3.1 多显示器物理适配准则
 macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的渲染与几何特性存在本质差异：
-- **内建刘海屏 (`hasPhysicalNotch == true`)**：
+- **内建刘海屏 (`hasPhysicalNotch == true` 或内建主屏)**：
   - 状态栏高度以系统安全区（通常为 32pt 或 34pt）为准；
   - 顶部保留 5pt 硬件级喇叭口耳翼（`topEarRadius = IslandTheme.CornerRadius.TOP_EAR`，默认 5.0pt）；
-  - 全局单例 `IslandPanel` 常态常驻守护于此，呈现紧凑态胶囊（Compact Island）。
-- **外接平直显示器 (`hasPhysicalNotch == false`)**：
+  - 主屏独立面板（`primaryPanel`）常态常驻守护于此，运行主屏独立状态机，呈现紧凑态胶囊（Compact Island）。
+- **外接平直显示器 (`hasPhysicalNotch == false && !isBuiltIn`)**：
   - **彻底废除 160pt 虚拟假刘海**：平直外接屏 `physicalNotchRect == .zero`，消除假刘海与常驻黑胶囊的视觉污染；
   - **动态菜单碰撞判定**：溢出判定完全基于前台 App 菜单右边缘碰撞（`appMenuRightEdge + 12pt`），仅当三方项被挤压时才判定为溢出；
   - **常态 100% 隐形**：平直外接屏折叠常态下完全隐退（`alpha = 0`，`ignoresMouseEvents = true`），底层窗口 100% 物理直通；
   - **展开统一黑仿真灵动岛设计**：展开态保持统一纯黑吸光底座、微光渐变描边与顶部 5.0pt 标志性外展平滑喇叭弧；
-  - **聚焦跟随流转架构**：全局单例 `IslandPanel` 视口随用户聚焦屏幕（点击屏幕或激活应用）自然流转。聚焦在外接屏时窗口常驻外接屏（折叠常态隐形穿透），触碰顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏跳动与徽标闪烁；
-  - **状态栏高度探测**：状态栏高度必须通过 WindowServer 状态栏窗口（Layer 24）动态探测（通常为 30pt 或 31pt），严禁硬编码 34.0pt。
+  - **双屏独立多实例架构与隔离状态机 (Ticket #53)**：主屏拥有常驻 `primaryPanel`，外接屏按需装载独立 `externalPanel`，分别搭载物理隔离的 `IslandStateMachine`，心跳由 `MenuBarSyncCoordinator` 集中聚合；触碰外接屏顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏抢夺与徽标闪烁；
+  - **全屏幕拓扑自适应**：智能兼容 MacBook 内置刘海、单平直屏（Mac mini / 盒盖模式）、双外接平直屏等多形态，主屏幕守护主面板，第二屏守护副面板；
+- **双轨物理自律与全局应用图元注册表 (Application Asset Vault)**：
+  - 各显示器轨道绝对独立闭环，各管本屏物理几何、窗口扫描与溢出判定，**坚决杜绝跨屏窗口配对或借调**；
+  - WindowServer 在非聚焦屏幕上为了节能会暂停菜单项光栅化（窗口截图返回全透明）；
+  - `IconResolver` 维护以进程 `bundleIdentifier` 为索引的全局应用图元注册表（`appAssetVault`）。任一激活屏幕成功截取到真实位图时即登记入库；非激活屏幕展开灵动岛时直接凭本轨项确凿的 Bundle ID 直出真实超清位图，0 延迟、0 兜底、0 错配。
 
 ### 3.2 全屏空间 (Full-Screen Spaces) 沉浸协同
 - **全屏判定标准**：

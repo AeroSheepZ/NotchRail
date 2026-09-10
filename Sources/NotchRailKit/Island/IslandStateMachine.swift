@@ -62,7 +62,6 @@ public final class IslandStateMachine: ObservableObject {
         collapseTimer = nil
         guard currentState != .fullScreenHidden else { return }
         currentState = .fullScreenHidden
-        MenuBarSyncCoordinator.shared.deactivateHeartbeat()
     }
     
     /// 全屏顶边缘碰顶唤醒至紧凑态
@@ -99,7 +98,6 @@ public final class IslandStateMachine: ObservableObject {
         case .collapsing:
             // 宽限期内鼠标重新移入，取消收起并恢复展开态
             currentState = .extended
-            MenuBarSyncCoordinator.shared.activateHeartbeat()
             
         case .hoverPending, .extended, .fullScreenHidden:
             break
@@ -157,7 +155,6 @@ public final class IslandStateMachine: ObservableObject {
         self.activeOverflowCount = overflowCount
         guard currentState != .extended else { return }
         currentState = .extended
-        MenuBarSyncCoordinator.shared.activateHeartbeat()
     }
     
     /// 显式触发收起
@@ -166,6 +163,5 @@ public final class IslandStateMachine: ObservableObject {
         collapseTimer = nil
         guard currentState != .compact else { return }
         currentState = .compact
-        MenuBarSyncCoordinator.shared.deactivateHeartbeat()
     }
 }

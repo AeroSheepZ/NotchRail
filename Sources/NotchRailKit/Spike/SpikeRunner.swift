@@ -470,7 +470,9 @@ public enum SpikeRunner {
         
         // Test 20: 点击外部即时收起 (Dismiss on Click Outside) 与穿透契约 (Ticket #48 & #49 & #53)
         let currentGeom = IslandWindowCoordinator.shared.currentPanelGeometry
-        let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID)
+        guard let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID) else {
+            fatalError("Test 20 failed: targetSM must not be nil")
+        }
         targetSM.triggerExpand(overflowCount: 4)
         check(targetSM.currentState.isExpanded, "Test 20: Island must be expanded")
         let activeRect = currentGeom.interactiveScreenRect(isExpanded: true, overflowCount: 4)
@@ -497,12 +499,18 @@ public enum SpikeRunner {
         syncCoordinator.stop()
         check(syncCoordinator.heartbeatState == .dormant, "Test 21: stop must return to dormant")
         
-        let sig1 = IconResolver.RawCaptureSignature(boundsWidth: 40.0, pixelWidth: 80, pixelHeight: 66, dataHash: 12345)
-        let sig2 = IconResolver.RawCaptureSignature(boundsWidth: 40.0, pixelWidth: 80, pixelHeight: 66, dataHash: 12345)
-        let sig3 = IconResolver.RawCaptureSignature(boundsWidth: 40.0, pixelWidth: 80, pixelHeight: 66, dataHash: 67890)
-        check(sig1 == sig2, "Test 21: Identical signatures must be equal")
-        check(sig1 != sig3, "Test 21: Different dataHash must not be equal")
-        print("   ✅ Case 21 通过: Smart Heartbeat 按需休眠状态机与图元签名比对契约通过")
+        check(IconResolver.CapturedIcon.isVisuallyEqual(nil, nil), "Test 21: nil icons must be visually equal")
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        if let ctx = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+           let img = ctx.makeImage() {
+            let icon1 = IconResolver.CapturedIcon(cgImage: img, scale: 2.0)
+            let icon2 = IconResolver.CapturedIcon(cgImage: img, scale: 2.0)
+            let icon3 = IconResolver.CapturedIcon(cgImage: img, scale: 1.0)
+            check(IconResolver.CapturedIcon.isVisuallyEqual(icon1, icon2), "Test 21: Identical icons must be visually equal")
+            check(!IconResolver.CapturedIcon.isVisuallyEqual(icon1, icon3), "Test 21: Different scales must not be equal")
+            check(!IconResolver.CapturedIcon.isVisuallyEqual(icon1, nil), "Test 21: Icon vs nil must not be equal")
+        }
+        print("   ✅ Case 21 通过: Smart Heartbeat 按需休眠状态机与 CapturedIcon 视觉比对契约通过")
         
         // Test 22: 批量窗口描述提取与事件驱动 AX 候选池维护契约 (Ticket 2 #52)
         let wids = Bridging.menuBarWindowIDs()
@@ -524,21 +532,21 @@ public enum SpikeRunner {
         // Test 23: 双屏多实例独立面板与隔离状态机契约 (Ticket 3 #53)
         let primaryGeom = ScreenManager.shared.primaryGeometry
         let primarySM = coordinator.stateMachine(for: primaryGeom.displayID)
+        check(primarySM != nil, "Test 23: Primary state machine must be present")
         let extGeomMock = ScreenManager.shared.allGeometries.first(where: { !$0.hasPhysicalNotch && !$0.isBuiltIn })
-        if let extGeom = extGeomMock {
-            let extSM = coordinator.stateMachine(for: extGeom.displayID)
-            check(primarySM !== extSM, "Test 23: Primary and external state machines must be distinct instances")
+        if let extGeom = extGeomMock, let pSM = primarySM, let extSM = coordinator.stateMachine(for: extGeom.displayID) {
+            check(pSM !== extSM, "Test 23: Primary and external state machines must be distinct instances")
             
-            primarySM.triggerExpand(overflowCount: 3)
-            check(primarySM.currentState.isExpanded, "Test 23: Primary island must be expanded")
+            pSM.triggerExpand(overflowCount: 3)
+            check(pSM.currentState.isExpanded, "Test 23: Primary island must be expanded")
             check(!extSM.currentState.isExpanded, "Test 23: External island must remain collapsed when primary expands")
             
-            primarySM.triggerCollapse()
-            check(primarySM.currentState == .compact, "Test 23: Primary island must collapse")
+            pSM.triggerCollapse()
+            check(pSM.currentState == .compact, "Test 23: Primary island must collapse")
             
             extSM.triggerExpand(overflowCount: 2)
             check(extSM.currentState.isExpanded, "Test 23: External island must be expanded")
-            check(!primarySM.currentState.isExpanded, "Test 23: Primary island must remain compact when external expands")
+            check(!pSM.currentState.isExpanded, "Test 23: Primary island must remain compact when external expands")
             extSM.triggerCollapse()
         }
         print("   ✅ Case 23 通过: 双屏独立面板生命周期与状态机物理隔离契约通过")

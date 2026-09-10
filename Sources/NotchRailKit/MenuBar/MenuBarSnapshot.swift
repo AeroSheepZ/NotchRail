@@ -33,25 +33,7 @@ public struct MenuBarSnapshot: Equatable, Sendable {
     public var overflowItems: [MenuBarItem] {
         let overflowed = allItems.filter { $0.displayMode == .overflowed }
         guard !customItemOrder.isEmpty else { return overflowed }
-        
-        return overflowed.sorted { a, b in
-            let keyA = a.bundleIdentifier ?? a.persistentKey
-            let keyB = b.bundleIdentifier ?? b.persistentKey
-            
-            let idxA = customItemOrder.firstIndex(of: keyA) ?? (a.bundleIdentifier.flatMap { customItemOrder.firstIndex(of: $0) })
-            let idxB = customItemOrder.firstIndex(of: keyB) ?? (b.bundleIdentifier.flatMap { customItemOrder.firstIndex(of: $0) })
-            
-            switch (idxA, idxB) {
-            case let (.some(iA), .some(iB)):
-                return iA < iB
-            case (.some, .none):
-                return true
-            case (.none, .some):
-                return false
-            case (.none, .none):
-                return false
-            }
-        }
+        return overflowed.sorted(by: MenuBarItem.comparator(for: customItemOrder))
     }
     
     /// 溢出项总数

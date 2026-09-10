@@ -95,11 +95,11 @@ final class PreferenceStoreTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         
         let store = PreferenceStore(userDefaults: defaults)
-        store.addIgnored(bundleID: "com.apple.Music")
+        store.hideItem("com.apple.Music")
         XCTAssertTrue(store.preferences.ignoredBundleIDs.contains("com.apple.Music"))
         
         // 重复添加不重复
-        store.addIgnored(bundleID: "com.apple.Music")
+        store.hideItem("com.apple.Music")
         XCTAssertEqual(store.preferences.ignoredBundleIDs.filter { $0 == "com.apple.Music" }.count, 1)
         
         // 切换移除
@@ -107,8 +107,8 @@ final class PreferenceStoreTests: XCTestCase {
         XCTAssertFalse(store.preferences.ignoredBundleIDs.contains("com.apple.Music"))
         
         // 批量添加后清空
-        store.addIgnored(bundleID: "com.app.1")
-        store.addIgnored(bundleID: "com.app.2")
+        store.hideItem("com.app.1")
+        store.hideItem("com.app.2")
         XCTAssertEqual(store.preferences.ignoredBundleIDs.count, 2)
         store.clearAllIgnored()
         XCTAssertTrue(store.preferences.ignoredBundleIDs.isEmpty)

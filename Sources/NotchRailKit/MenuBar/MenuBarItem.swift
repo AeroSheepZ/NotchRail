@@ -19,17 +19,16 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public var capability: InteractionCapability
     public var isUnresponsive: Bool
     public var isOnScreen: Bool
-    
-    /// 跨扫描周期的稳定持久化缓存键（基于 Bundle ID、AX 标识符或 Title）
+    /// 跨扫描周期的稳定持久化缓存键（优先 Bundle ID，若缺失则以 windowID 严格物理隔离，绝不共享通用 key）
     public var persistentKey: String {
         if let bundleID = bundleIdentifier, !bundleID.isEmpty {
             return "\(bundleID):\(axIdentifier ?? title ?? "default")"
         } else if let axID = axIdentifier, !axID.isEmpty {
             return "ax:\(axID)"
-        } else if let t = title, !t.isEmpty {
+        } else if let t = title, !t.isEmpty, t != "菜单栏项", t != "Item-0" {
             return "title:\(t)"
         } else {
-            return "pid:\(processIdentifier)"
+            return "win:\(windowID)"
         }
     }
 
@@ -39,6 +38,33 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
             return "win_\(windowID)"
         } else {
             return "\(persistentKey)"
+        }
+    }
+    
+    /// 统一偏好与排序唯一标识键（优先 Bundle ID，回退持久化键）
+    public var preferenceKey: String {
+        bundleIdentifier ?? persistentKey
+    }
+    
+    /// 生成基于 customItemOrder 排序规则的纯函数比较器
+    public static func comparator(for order: [String]) -> (MenuBarItem, MenuBarItem) -> Bool {
+        return { a, b in
+            guard !order.isEmpty else { return false }
+            let keyA = a.preferenceKey
+            let keyB = b.preferenceKey
+            let idxA = order.firstIndex(of: keyA) ?? (a.bundleIdentifier.flatMap { order.firstIndex(of: $0) })
+            let idxB = order.firstIndex(of: keyB) ?? (b.bundleIdentifier.flatMap { order.firstIndex(of: $0) })
+            
+            switch (idxA, idxB) {
+            case let (.some(iA), .some(iB)):
+                return iA < iB
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return false
+            }
         }
     }
     
