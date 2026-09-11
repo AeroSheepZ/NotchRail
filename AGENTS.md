@@ -5,11 +5,39 @@
 ---
 
 ## 目录
+0. [事实唯一归属（Single Home per Fact）](#0-事实唯一归属single-home-per-fact)
 1. [系统架构全景与模块职责](#1-系统架构全景与模块职责)
 2. [核心工程哲学与架构不变量](#2-核心工程哲学与架构不变量)
 3. [关键子系统实现与交互准则](#3-关键子系统实现与交互准则)
 4. [研发自测与发布闭环工作流](#4-研发自测与发布闭环工作流)
 5. [编码规范与协作纪律](#5-编码规范与协作纪律)
+
+---
+
+## 0. 事实唯一归属（Single Home per Fact）
+
+**硬规则**：每一类事实在本仓库**有且只有一个权威「家」**；其余文档**只能引用，不得复制**——不得复述别处的定义，不得内联别处的数值。
+
+违反此规则即制造「**文档幻觉**」：同一事实存在多个可能被读到的地方，AI 编程智能体便会随机采纳其中一个，产出与代码不符的方案与代码。历史上反复出现的「同一指标多处口径不一」「文档引用已删除的符号」皆源于此。
+
+| # | 事实类型 | 唯一权威「家」 | 其余文档的义务 |
+| :--- | :--- | :--- | :--- |
+| 1 | 领域术语的词义与禁用别名 | `CONTEXT.md` | 只引用词条名，不得重定义；该文件**零实现细节** |
+| 2 | 实体 / 枚举 / 状态机 / 字段的**结构**与签名 | `docs/DOMAIN_MODEL.md` | 术语含义引 `CONTEXT.md`；ADR 只引编号 |
+| 3 | 架构不变量、模块分层与职责、编码与协作纪律 | 本文件（`AGENTS.md`） | 唯一权威，其他文档不得重述 |
+| 4 | 跨版本架构决策的**理由** | `docs/adr/NNNN-*.md` | 只引用 ADR 编号，不复述决议内容 |
+| 5 | 版本演进史（各版本交付了什么、是否闭环） | `docs/DEVELOPMENT_PLAN.md` | 唯一版本清单 |
+| 6 | 版本 → Issue 编号映射与 Spec 查询约定 | `docs/agents/issue-tracker.md` | 不得手写版本清单，一律由 `gh` 现查 |
+| 7 | 单个已闭环版本的详细规格 | `docs/SPEC.md`（历史归档，**非现状**） | 新版本规格一律进 GitHub Issues |
+| 8 | 面向用户的安装与特性说明 | `README.md` | 不得陈述架构不变量，不得内联数值 |
+| 9 | **一切数值常量与阈值** | **代码中的具名常量声明** | 文档**只准引用常量名，禁止内联数值** |
+
+**推论（须自觉遵守）**：
+
+- 需要引用数值时写常量名（如 `OverflowCalculator.NOTCH_CORNER_SAFETY_MARGIN`），**不要写出数值本身**；代码若尚无具名常量，先抽常量再引名。
+- 需求的第一来源永远是 GitHub Issues（见 `docs/agents/issue-tracker.md`）；`docs/SPEC.md` 只是滞后归档，不可当作现状。
+- 若某事实无处安放、或与既有文档冲突，**先向用户澄清再落笔**，不要新增第三处出处。
+- 一致性由 `scripts/check_docs.sh` 机器校验兜底，改动文档后须本地跑一次。
 
 ---
 
@@ -21,8 +49,9 @@ NotchRail 是一款基于 Swift 与 SwiftUI 构建的 macOS 原生沉浸式物�
 
 ```
 NotchRail/
-├── Sources/NotchRail/               # 主应用生命周期 (NotchRailApp, AppDelegate)
+├── Sources/NotchRail/               # 主应用入口 (NotchRailApp)
 └── Sources/NotchRailKit/
+    ├── App/                         # 应用生命周期代理与状态项常驻托盘管理 (AppDelegate, StatusItemManager)
     ├── Screen/                      # 屏幕拓扑、几何测绘、全屏 Space 检测与光标监听
     ├── MenuBar/                     # 窗口扫描 (SkyLight CGS)、AX 身份映射、溢出计算、图标截取管线
     ├── Island/                      # 灵动岛 UI 视图体系、自适应动态耳翼、流体拖拽重排、悬停/点击交互状态机
@@ -30,7 +59,7 @@ NotchRail/
     ├── Persistence/                 # UserPreferences 领域模型 (含 customItemOrder) 与 PreferenceStore 持久化
     ├── Settings/                    # 现代化偏好设置中心 (常规、悬停动效、应用管理、诊断)
     ├── Permissions/                 # 辅助功能 (AX) 与屏幕录制 (CGScreenCapture) 权限流
-    ├── Spike/                       # 真实硬件端到端诊断运行器 (Case 1~24)
+    ├── Spike/                       # 真实硬件端到端诊断运行器 (22 个用例，编号 1–24 含历史断档)
     └── Bridging/                    # CoreGraphics / SkyLight 私有 CGS API 桥接
 ```
 
@@ -82,10 +111,10 @@ NotchRail/
 
 ### 2.4 纯物理几何判定 (Pure Physical Geometry)
 - 溢出项判定（`OverflowCalculator`）必须完全基于真实物理几何与碰撞判定：
-  - **内建物理刘海屏**：基于物理 X 坐标与刘海右侧过渡区安全余量（`notchRightEdge + 24pt`，即 `OverflowCalculator.NOTCH_CORNER_SAFETY_MARGIN`）；
-  - **平直外接显示器**：基于前台 App 菜单右边缘碰撞阈值（`appMenuRightEdge + 12pt`，即 `OverflowCalculator.APP_MENU_COLLISION_SAFETY_MARGIN`）；
+  - **内建物理刘海屏**：基于物理 X 坐标与刘海右侧过渡区安全余量（余量常量见 `OverflowCalculator.NOTCH_CORNER_SAFETY_MARGIN`）；
+  - **平直外接显示器**：基于前台 App 菜单右边缘碰撞阈值（阈值常量见 `OverflowCalculator.APP_MENU_COLLISION_SAFETY_MARGIN`）；
 - **严禁依赖 `!item.isOnScreen`**：在 macOS 切换 Space 或全屏时，WindowServer 会将所有菜单项标记为未上屏，依赖该状态会导致菜单项被误判为全量溢出；
-- 仅当菜单项的水平跨度确实落在当前屏幕有效宽度内（`isWithinScreenSpan`）时参与计算，非本屏窗口绝不可标记为本屏溢出项。
+- 仅当菜单项的水平跨度确实落在当前屏幕有效宽度内时才参与计算（该边界判定内联于 `OverflowCalculator.resolve`，不存在独立的辅助函数），非本屏窗口绝不可标记为本屏溢出项。
 
 ---
 
@@ -94,14 +123,14 @@ NotchRail/
 ### 3.1 多显示器物理适配准则
 macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的渲染与几何特性存在本质差异：
 - **内建刘海屏 (`hasPhysicalNotch == true` 或内建主屏)**：
-  - 状态栏高度以系统安全区（通常为 32pt 或 34pt）为准；
-  - 顶部保留 5pt 硬件级喇叭口耳翼（`topEarRadius = IslandTheme.CornerRadius.TOP_EAR`，默认 5.0pt）；
+  - 状态栏高度以系统安全区（`safeAreaTop`）实测为准；无安全区数据时兜底 `NotchGeometry.DEFAULT_STATUS_BAR_HEIGHT`；
+  - 顶部保留硬件级喇叭口耳翼（半径常量见 `IslandTheme.CornerRadius.TOP_EAR`）；
   - 主屏独立面板（`primaryPanel`）常态常驻守护于此，运行主屏独立状态机，呈现紧凑态胶囊（Compact Island）。
 - **外接平直显示器 (`hasPhysicalNotch == false && !isBuiltIn`)**：
   - **彻底废除 160pt 虚拟假刘海**：平直外接屏 `physicalNotchRect == .zero`，消除假刘海与常驻黑胶囊的视觉污染；
-  - **动态菜单碰撞判定**：溢出判定完全基于前台 App 菜单右边缘碰撞（`appMenuRightEdge + 12pt`），仅当三方项被挤压时才判定为溢出；
+  - **动态菜单碰撞判定**：溢出判定完全基于前台 App 菜单右边缘碰撞（阈值常量见 `OverflowCalculator.APP_MENU_COLLISION_SAFETY_MARGIN`），仅当三方项被挤压时才判定为溢出；
   - **常态 100% 隐形**：平直外接屏折叠常态下完全隐退（`alpha = 0`，`ignoresMouseEvents = true`），底层窗口 100% 物理直通；
-  - **展开统一黑仿真灵动岛设计**：展开态保持统一纯黑吸光底座、微光渐变描边与顶部 5.0pt 标志性外展平滑喇叭弧；
+  - **展开统一黑仿真灵动岛设计**：展开态保持统一纯黑吸光底座、微光渐变描边与顶部标志性外展平滑喇叭弧（耳翼半径同刘海屏，见 `IslandTheme.CornerRadius.TOP_EAR`）；
   - **双屏独立多实例架构与隔离状态机 (Ticket #53)**：主屏拥有常驻 `primaryPanel`，外接屏按需装载独立 `externalPanel`，分别搭载物理隔离的 `IslandStateMachine`，心跳由 `MenuBarSyncCoordinator` 集中聚合；触碰外接屏顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏抢夺与徽标闪烁；
   - **全屏幕拓扑自适应**：智能兼容 MacBook 内置刘海、单平直屏（Mac mini / 盒盖模式）、双外接平直屏等多形态，主屏幕守护主面板，第二屏守护副面板；
 - **双轨物理自律与全局应用图元注册表 (Application Asset Vault)**：
@@ -115,18 +144,18 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
   - 必须通过当前激活应用主窗口的 `AXFullScreen` 原生属性及其在目标屏幕边界的相交性进行判定。
 - **顶边缘热区唤醒与淡退**：
   - 全屏隐退态下，面板 `alpha = 0` 且 `ignoresMouseEvents = true`；
-  - 当光标碰触屏幕顶边缘热区（$\le 2\text{pt}$）时，随系统菜单栏平滑淡入唤出紧凑态；移出交互区后经过 300ms 缓冲平滑淡出，全屏项点击后自动退出唤醒。
+  - 当光标碰触屏幕顶边缘热区（阈值常量见 `NotchGeometry.TOP_EDGE_HOT_ZONE_THRESHOLD`）时，随系统菜单栏平滑淡入唤出紧凑态；移出交互区后经过移出宽限（时序见 §3.3）平滑淡出，全屏项点击后自动退出唤醒。
 
 ### 3.3 交互状态机与防抖时序 (`IslandStateMachine`)
 - **多通道触发**：支持「鼠标悬停（默认）」、「仅点击展开」、「悬停或点击」三种交互方式；
-- **防误触时序**：
-  - **移入意图识别（120ms）**：鼠标快速划过刘海区域不触发展开；
-  - **移出离开缓冲（300ms）**：鼠标短暂离开灵动岛时保留 Grace Period，防止误收起；
+- **防误触时序**（均由用户偏好驱动，下述为默认值）：
+  - **移入意图识别**：延迟取 `UserPreferences.hoverExpandDelayMs`，默认值为 `IslandTheme.Timing.HOVER_EXPAND_DELAY`；鼠标快速划过刘海区域不触发展开；
+  - **移出离开缓冲**：延迟取 `UserPreferences.collapseDelayMs`，默认值为 `IslandTheme.Timing.COLLAPSE_DELAY`；鼠标短暂离开灵动岛时保留 Grace Period，防止误收起；
 - **点击自动收起**：触发项分发后，根据用户偏好原子流转回紧凑态并触发触觉反馈（`NSHapticFeedbackManager`）。
 
 ### 3.4 辅助功能 (AX) 与系统代理穿透准则
 - **外接屏代理反查**：macOS 在扩展屏上将三方状态项统一归入系统宿主进程代管，绝不可依据窗口的 `ownerPID` 过滤候选进程；必须由 `MenuBarAXResolver` 维护增量缓存池（`knownMenuBarPIDs`），通过空间物理位置（`AXPosition`）反查真实应用与 Bundle ID；
-- **子进程防挂起过滤**：扫描候选应用时必须过滤排除 `WebKit.WebContent` / `renderer` 等子进程，防止 Accessibility IPC 出现 1.5s 以上超时；日常刷新保持增量扫描耗时 $< 10\text{ms}$。
+- **子进程防挂起过滤**：扫描候选应用时必须过滤排除 `WebKit.WebContent` / `renderer` 等子进程，防止 Accessibility IPC 出现秒级以上超时；日常刷新保持增量扫描耗时 $< 10\text{ms}$。
 
 ---
 
@@ -143,12 +172,19 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
 swift build
 ```
 - 必须保证 **0 Error，0 Warning**；若引入新 API 须确保兼容 macOS 14.0+。
+- **工具链前提（SDK 27 宏插件陷阱）**：若本机仅装 CommandLineTools 且其 `MacOSX.sdk` 已指向 macOS 27 系列，SwiftUI 的 `@State` 等已改为宏实现，而宏插件 `SwiftUIMacros` **只随完整 Xcode 分发**，会导致全项目编译失败并刷出大量**级联假错**（`self is immutable`、`cannot find '$searchText' in scope`、`generic parameter 'SelectionValue' could not be inferred` 等）。此时**切勿修改业务代码**，把 SDK 指回 26.5 即可（`--disable-sandbox` 供受限/沙箱环境使用）：
+
+  ```bash
+  export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+  swift build --disable-sandbox
+  ```
 
 ### 4.2 单元测试全量回归
 ```bash
 swift test
 ```
 - 保证 `ScreenManagerTests`、`MouseMonitorTests`、`OverflowCalculatorTests`、`IslandStateMachineTests` 等单元测试 100% 通过。
+- **工具链前提（勿谎称通过）**：`swift test` 依赖完整 Xcode 提供的 `xctest`。若本机仅有 CommandLineTools，`swift test` 只会编译测试包后**静默退出**（退出码 0 但不执行任何用例），此时**不得声称单测已通过**；须在装有完整 Xcode 的环境（或 CI）中执行后方可下结论。
 
 ### 4.3 现场真实硬件诊断 (`SpikeRunner`)
 ```bash
@@ -156,7 +192,7 @@ swift run NotchRail --spike
 ```
 在具备外接屏或物理刘海的环境中运行，重点核查以下输出指标：
 1. **算法自测**：内置全量边界验证 Case 全部通过；
-2. **扫描耗时**：`MenuBarWindowScanner` 耗时处于健康范围（日常增量 $< 50\text{ms}$）；
+2. **扫描耗时**：日常增量扫描期望 $< 10\text{ms}$（与 §3.4 为同一契约，本文件为该指标的唯一定义处）；超过 $50\text{ms}$ 即视为异常，须排查根因；
 3. **图标解析率**：成功解析图标率必须为 **100%**，全部状态为 `[State: loaded]`，严禁残留 `[State: pending]`；
 4. **屏幕几何对齐**：显示器状态栏测量高度与系统实际高度一致。
 

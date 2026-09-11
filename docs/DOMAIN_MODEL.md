@@ -2,6 +2,10 @@
 
 本文档定义 NotchRail 系统的核心领域模型、实体边界、值对象、配置体系、状态机生命周期与事件驱动机制。
 
+> **权威边界**（见 `AGENTS.md` §0 归属矩阵）：本文件拥有**结构**的唯一解释权——实体、枚举、字段与签名。
+> **术语含义**以 `CONTEXT.md` 为准，本文件不重定义；**数值**以代码中的具名常量声明为唯一来源，本文件只引常量名、不写数值；
+> **决策理由**见 `docs/adr/`，本文件只引 ADR 编号、不复述决议。
+
 ---
 
 ## 1. 领域模型全景 (Domain Model Overview)
@@ -12,13 +16,16 @@ classDiagram
         +UUID id
         +CGWindowID windowID
         +pid_t processIdentifier
-        +String bundleIdentifier
-        +String title
+        +String? bundleIdentifier
+        +String? title
         +CGRect nativeFrame
         +DisplayMode displayMode
         +InteractionCapability capability
+        +Bool isUnresponsive
         +Bool isOnScreen
         +String iconCacheKey
+        +String persistentKey
+        +String preferenceKey
     }
 
     class AXEntry {
@@ -70,6 +77,7 @@ classDiagram
         hoverPending
         extended
         collapsing
+        fullScreenHidden
     }
 
     class UserPreferences {
@@ -83,6 +91,7 @@ classDiagram
         +Double collapseDelayMs
         +List~String~ customItemOrder
         +Bool launchAtLogin
+        +Bool skipScreenCapturePrompt
     }
 
     MenuBarSnapshot "1" *-- "*" MenuBarItem : contains
@@ -107,18 +116,29 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public let processIdentifier: pid_t
     public let bundleIdentifier: String?
     public let title: String?
+    public let axIdentifier: String?
+    public let axRole: String?
+    public let axSubrole: String?
     public var nativeFrame: CGRect
     public var displayMode: DisplayMode
     public var capability: InteractionCapability
+    public var isUnresponsive: Bool
     public var isOnScreen: Bool
     
-    /// 唯一且稳定的图标缓存键（基于 Bundle ID + 窗口 ID 或进程 ID）
+    /// 跨扫描周期的稳定持久化缓存键（优先 Bundle ID；缺失时依次回退 ax/title，最终以 windowID 严格物理隔离）
+    public var persistentKey: String
+    
+    /// 图标缓存键（以 windowID 为主键，确保跨扫描周期与 AX 解析前后绝对稳定）
     public var iconCacheKey: String {
-        if let bundleID = bundleIdentifier, !bundleID.isEmpty {
-            return "\(bundleID)_\(windowID)"
+        if windowID != 0 {
+            return "win_\(windowID)"
+        } else {
+            return "\(persistentKey)"
         }
-        return "pid_\(processIdentifier)_win_\(windowID)"
     }
+    
+    /// 统一偏好与排序唯一标识键（优先 Bundle ID，回退持久化键）
+    public var preferenceKey: String
     
     public enum DisplayMode: String, Codable, Sendable {
         case nativeVisible   // 在原生菜单栏清晰可见
@@ -126,7 +146,8 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     }
     
     public enum InteractionCapability: String, Codable, Sendable {
-        case standardAXPress // 支持通过 CGEvent + postToPid 触发原生下拉
+        case standardAXPress // 支持标准 AXPress 触发原生下拉
+        case unsupported     // 不支持直接 AX 触发
     }
 }
 ```
@@ -163,28 +184,29 @@ public struct CapturedIcon: Sendable {
 
 ```swift
 public enum TriggerMode: String, Codable, CaseIterable, Sendable {
-    case hover          // 鼠标悬停防抖触发（默认）
+    case hover          // 鼠标悬停防抖触发
     case click          // 仅点击胶囊展开/收起
     case hoverAndClick  // 悬停或点击均可触发
 }
 
 public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
-    case followFocusedScreen // 跟随当前聚焦屏幕（默认）
+    case followFocusedScreen // 跟随当前聚焦屏幕
     case mainScreenOnly      // 仅在主显示器（刘海屏）显示
     case disabled            // 外接显示器完全禁用
 }
 
 public struct UserPreferences: Codable, Equatable, Sendable {
-    public var triggerMode: TriggerMode                 // 默认固化为 .hoverAndClick（悬停或点击）
+    public var triggerMode: TriggerMode                 // 默认 .hoverAndClick
     public var autoCollapseOnClick: Bool                // 默认 true
     public var enableHapticFeedback: Bool               // 默认 true
     public var hideWhenNoOverflow: Bool                 // 默认 false
     public var externalDisplayMode: ExternalDisplayMode // 默认 .followFocusedScreen
     public var showMenuBarIcon: Bool                    // 默认 true
-    public var hoverExpandDelayMs: Double               // 默认 120.0ms (IslandTheme.Timing.HOVER_EXPAND_DELAY)
-    public var collapseDelayMs: Double                  // 默认 300.0ms (IslandTheme.Timing.COLLAPSE_DELAY)
+    public var hoverExpandDelayMs: Double               // 默认取 IslandTheme.Timing.HOVER_EXPAND_DELAY
+    public var collapseDelayMs: Double                  // 默认取 IslandTheme.Timing.COLLAPSE_DELAY
     public var customItemOrder: [String]                // 默认 []
     public var launchAtLogin: Bool                      // 默认 false
+    public var skipScreenCapturePrompt: Bool            // 默认 false
 }
 ```
 
@@ -226,15 +248,17 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
 }
 ```
 
+本类型同时定义热区与兜底阈值常量（**数值以代码为准**）：顶边缘热区阈值 `TOP_EDGE_HOT_ZONE_THRESHOLD`、外接屏中央热区跨度 `EXTERNAL_CENTER_HOT_ZONE_SPAN` 与垂直阈值 `EXTERNAL_CENTER_HOT_ZONE_THRESHOLD`、状态栏高度兜底 `DEFAULT_STATUS_BAR_HEIGHT`、系统默认应用菜单保留宽度 `DEFAULT_APP_MENU_WIDTH`。
+
 - **物理刘海屏 (`hasPhysicalNotch == true`)**：
   - `physicalNotchRect`：严格取自硬件刘海物理矩形；
   - `compactBounds`：常驻紧凑胶囊，以物理刘海为锚点，左侧根据溢出项动态伸出耳翼；
   - `appMenuRightEdge`：设为 `nil`（物理刘海屏溢出完全基于物理刘海右侧过渡区安全余量判定）。
 - **平直外接屏 (`hasPhysicalNotch == false`)**：
-  - `physicalNotchRect`：严格归零（`.zero`），废除假想 160pt 虚拟刘海；
+  - `physicalNotchRect`：严格归零（`.zero`）——虚拟假刘海形态已被彻底废除，该项不变量与废除理由见 `AGENTS.md` §3.1，本文不复述；
   - `compactBounds`：常态归零（`.zero`），面板 100% 隐形（`alpha = 0`，`ignoresMouseEvents = true`）；
   - `appMenuRightEdge`：动态捕获前台活跃应用主菜单的右边缘 X 坐标，作为状态项挤压碰撞阈值；
-  - **展开形态（统一黑仿真灵动岛）**：彻底废除平直托轨（`FloatingShelf`）概念。外接平直屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)` 经典外展喇叭弧、纯黑吸光底座与微光渐变描边；
+  - **展开形态（统一黑仿真灵动岛）**：彻底废除平直托轨（flat-docked shelf）形态。外接平直屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `IslandTheme.CornerRadius.TOP_EAR` 经典外展喇叭弧、纯黑吸光底座与微光渐变描边；
   - **视口架构（聚焦流转架构 Focus Following Architecture）**：彻底废除“视口借调（Viewport Leasing）”概念与术语。面板归属权由屏幕焦点唯一决定，折叠常态外接屏处于 `externalStealth`（100% 隐形穿透），触碰顶部中央热区即时原位升起展开。
 
 ---
@@ -245,9 +269,12 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
 
 ```swift
 public enum OverflowCalculator {
-    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 24.0 // 物理刘海右过渡区余量
-    public static let APP_MENU_COLLISION_MARGIN: CGFloat = 12.0  // 平直屏菜单碰撞安全余量
-    public static let SCREEN_EDGE_TOLERANCE: CGFloat = 5.0
+    /// 物理刘海右过渡区安全余量（数值以代码为准）
+    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat
+    /// 平直屏前台 App 菜单碰撞安全余量（数值以代码为准）
+    public static let APP_MENU_COLLISION_SAFETY_MARGIN: CGFloat
+    /// 屏幕左右边界越界容忍度（数值以代码为准）
+    public static let SCREEN_EDGE_TOLERANCE: CGFloat
     
     /// 双轨判定：物理刘海过渡区余量 / 平直屏 App 菜单边缘碰撞 + 屏幕左右边界越界
     public static func resolve(
@@ -261,7 +288,7 @@ public enum OverflowCalculator {
 - **物理刘海屏双轨判定**：
   - `frame.minX < geometry.physicalNotchRect.maxX + NOTCH_CORNER_SAFETY_MARGIN`
 - **平直外接屏双轨判定**：
-  - 当 `geometry.hasPhysicalNotch == false` 时，若 `geometry.appMenuRightEdge` 存在，判定 `frame.minX < appMenuRightEdge + APP_MENU_COLLISION_MARGIN`；
+  - 当 `geometry.hasPhysicalNotch == false` 时，若 `geometry.appMenuRightEdge` 存在，判定 `frame.minX < appMenuRightEdge + APP_MENU_COLLISION_SAFETY_MARGIN`；
 - **通配屏幕越界判定**：
   - `frame.maxX > screenMaxX + SCREEN_EDGE_TOLERANCE` 或 `frame.maxX < screenMinX`。
 
@@ -274,15 +301,19 @@ stateDiagram-v2
     [*] --> Compact : 启动就绪
 
     Compact --> HoverPending : [TriggerMode == .hover / .hoverAndClick] 鼠标进入热区
-    HoverPending --> Extended : 停顿达到防抖延迟 (默认 120ms)
-    HoverPending --> Compact : 划过移出 (< 120ms)
+    HoverPending --> Extended : 停顿达到移入意图延迟 (取 UserPreferences.hoverExpandDelayMs)
+    HoverPending --> Compact : 未达该延迟即划过移出
 
     Compact --> Extended : [TriggerMode == .click / .hoverAndClick] 点击胶囊
     Extended --> Compact : 点击胶囊 / 点击图标(autoCollapse) / 菜单栏托盘切换
 
     Extended --> Collapsing : 鼠标移出灵动岛
     Collapsing --> Extended : 宽限期内鼠标重新移入
-    Collapsing --> Compact : 宽限期计时器到期 (默认 300ms)
+    Collapsing --> Compact : 宽限期计时器到期 (取 UserPreferences.collapseDelayMs)
+
+    Compact --> FullScreenHidden : 进入全屏空间 (FullScreenStealth)
+    Extended --> FullScreenHidden : 进入全屏空间 (FullScreenStealth)
+    FullScreenHidden --> Compact : 光标碰触顶边缘热区唤醒 (TopEdgeHotZone)
 ```
 
 ---
@@ -303,16 +334,20 @@ stateDiagram-v2
 
 ## 6. 架构决策记录矩阵 (ADR Mapping Matrix)
 
-本领域模型规范与全局架构决策记录（Architecture Decision Records, ADR）严格对齐：
+本领域模型规范与全局架构决策记录（Architecture Decision Records, ADR）严格对齐。
 
-| ADR 编号 | 决策主题 | 影响模型 / 契约 | 核心要点 |
-| :--- | :--- | :--- | :--- |
-| **ADR 0001** | AX 空间几何反查映射 | `MenuBarAXResolver`, `AXEntry` | 解决扩展屏宿主代管进程 PID 假象，基于物理坐标反查真实应用 |
-| **ADR 0002** | 外接平直屏物理零刘海与动态菜单碰撞 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` | 平直屏 `physicalNotchRect == .zero`，动态菜单碰撞，常态 0 像素隐形。**决议 3（视口借调）与平直托轨形态已被 ADR 0008 取代** |
-| **ADR 0003** | 纯物理几何判定并废弃 isOnScreen | `OverflowCalculator`, `MenuBarItem` | 纯几何 X 轴判定，杜绝 Space 切换引发的瞬态全量误溢出 |
-| **ADR 0004** | 零降级真实位图像素级镜像 | `CapturedIcon`, `IconResolver` | 逐窗原生截图、透明裁切与视觉相等比对，严禁彩色 Dock 图标降级 |
-| **ADR 0005** | 原生物理坐标合成事件精准分发 | `MenuBarItem`, `CGEvent` | 使用原位物理坐标通过 postToPid 触发原生下拉菜单 |
-| **ADR 0006** | 稳固常驻视口与硬件级穿透管理 | `IslandWindowCoordinator`, `MouseMonitor` | 84pt 吸顶常驻视口，动态控制 `ignoresMouseEvents`，透明区 100% 物理直通 |
-| **ADR 0007** | 全屏空间隐退与顶边缘极窄热区唤醒 | `FullScreenDetector`, `NotchGeometry` | 全屏下面板隐退，光标触碰顶边缘 $\le 2\text{pt}$ 热区平滑淡入唤醒 |
-| **ADR 0008** | 双面板独立拓扑与聚焦流转架构 | `IslandWindowCoordinator`, `IconResolver`, `MenuBarSyncCoordinator` | 废除单例视口借调与平直托轨形态；主屏 `primaryPanel` 常驻、副屏 `externalPanel` 独立隐形；展开形态统一 `topEarRadius = 5.0pt`；`appAssetVault` 跨屏图元注册；面板归属 Fail-Fast |
+下表**仅为索引**（ADR 编号 ↔ 影响的本文件契约）；各决议的**理由与取舍**以 `docs/adr/` 正文为唯一来源，此处不复述。
+
+| ADR 编号 | 决策主题 | 影响模型 / 契约 |
+| :--- | :--- | :--- |
+| **ADR 0001** | AX 空间几何反查映射 | `MenuBarAXResolver`, `AXEntry` |
+| **ADR 0002** | 外接平直屏物理零刘海与动态菜单碰撞 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` |
+| **ADR 0003** | 纯物理几何判定并废弃 isOnScreen | `OverflowCalculator`, `MenuBarItem` |
+| **ADR 0004** | 零降级真实位图像素级镜像 | `CapturedIcon`, `IconResolver` |
+| **ADR 0005** | 原生物理坐标合成事件精准分发 | `MenuBarItem`, `CGEvent` |
+| **ADR 0006** | 稳固常驻视口与硬件级穿透管理 | `IslandWindowCoordinator`, `MouseMonitor` |
+| **ADR 0007** | 全屏空间隐退与顶边缘极窄热区唤醒 | `FullScreenDetector`, `NotchGeometry` |
+| **ADR 0008** | 双面板独立拓扑与聚焦流转架构 | `IslandWindowCoordinator`, `IconResolver`, `MenuBarSyncCoordinator` |
+
+> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代，详见该 ADR 顶部状态横幅。
 
