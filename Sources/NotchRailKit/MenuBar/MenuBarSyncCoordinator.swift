@@ -191,7 +191,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         
         let allGeometries = ScreenManager.shared.allGeometries
         let prefs = PreferenceStore.shared.preferences
-        let ignoredIDs = Set(prefs.ignoredBundleIDs)
         let customOrder = prefs.customItemOrder
         
         Task {
@@ -200,7 +199,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             let currentSnapshot = OverflowCalculator.resolve(
                 items: currentItems,
                 geometry: currentGeom,
-                ignoredBundleIDs: ignoredIDs,
                 customItemOrder: customOrder
             )
             
@@ -241,7 +239,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                         let otherSnap = OverflowCalculator.resolve(
                             items: otherItems,
                             geometry: otherGeom,
-                            ignoredBundleIDs: ignoredIDs,
                             customItemOrder: customOrder
                         )
                         if !otherSnap.overflowItems.isEmpty {
@@ -301,7 +298,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         let updatedSnapshot = OverflowCalculator.resolve(
             items: existingSnapshot.allItems,
             geometry: geom,
-            ignoredBundleIDs: Set(prefs.ignoredBundleIDs),
             customItemOrder: prefs.customItemOrder
         )
         self.snapshotsByDisplay[geom.displayID] = updatedSnapshot
@@ -343,7 +339,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // 监听应用隐藏与取消隐藏
+        // 监听应用整体隐藏与取消隐藏（⌘H 应用级隐藏，与状态项显隐无关）
         center.publisher(for: NSWorkspace.didHideApplicationNotification)
             .sink { [weak self] _ in self?.scheduleSync() }
             .store(in: &cancellables)

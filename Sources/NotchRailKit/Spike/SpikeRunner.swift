@@ -120,10 +120,10 @@ public enum SpikeRunner {
         
         print("\n========================================================")
         print("🎯 [Feasibility Spike 结论]:")
-        if elapsedMs < 50.0 {
-            print("   ✅ 扫描性能达标 (< 50ms)")
+        if elapsedMs < 15.0 {
+            print("   ✅ 扫描性能达标 (< 15ms)")
         } else {
-            print("   ⚠️ 耗时稍高 (\(String(format: "%.2f", elapsedMs))ms)")
+            print("   ⚠️ 耗时未达标 (\(String(format: "%.2f", elapsedMs))ms, 契约 < 15ms)")
         }
         print("   ✅ 用户偏好持久化 (PreferenceStore) 正常就绪")
         print("   ✅ 三级图标降级管道 (IconResolver) 正常就绪")
@@ -187,18 +187,6 @@ public enum SpikeRunner {
         check(snapshot2.visibleItems.count == 0, "Test 2: Visible item count mismatch")
         check(snapshot2.overflowItems.count == 1, "Test 2: Overflow item count mismatch")
         print("   ✅ Case 2 通过: 刘海遮挡/左侧图标正确判定为 overflowed")
-        
-        // 测试 3: 忽略黑名单判定
-        let ignoredItem = MenuBarItem(
-            processIdentifier: 303,
-            bundleIdentifier: "com.hidden.app",
-            title: "Hidden",
-            nativeFrame: CGRect(x: 700, y: 955, width: 30, height: 24)
-        )
-        let snapshot3 = OverflowCalculator.resolve(items: [ignoredItem], geometry: mockGeometry, ignoredBundleIDs: ["com.hidden.app"])
-        check(snapshot3.overflowItems.count == 0, "Test 3: Ignored item in overflow list")
-        check(snapshot3.allItems.first?.displayMode == .ignored, "Test 3: Display mode not ignored")
-        print("   ✅ Case 3 通过: 忽略名单中的项正确标记为 ignored")
         
         // 测试 4: 外接平直屏幕零刘海几何判定
         let extScreenFrame = CGRect(x: 0, y: 0, width: 3840, height: 2160)
@@ -331,14 +319,12 @@ public enum SpikeRunner {
         check(testStore.preferences.hoverExpandDelayMs == IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0, "Test 11: Default hover delay mismatch")
         testStore.update { prefs in
             prefs.hoverExpandDelayMs = 180.0
-            prefs.ignoredBundleIDs.append("com.test.ignore")
         }
         check(testStore.preferences.hoverExpandDelayMs == 180.0, "Test 11: In-memory update mismatch")
         
         // 模拟重启重新加载
         let reloadedStore = PreferenceStore(userDefaults: defaultsSuite)
         check(reloadedStore.preferences.hoverExpandDelayMs == 180.0, "Test 11: Persistent reload mismatch")
-        check(reloadedStore.preferences.ignoredBundleIDs.contains("com.test.ignore"), "Test 11: Ignored bundle ID not preserved")
         print("   ✅ Case 11 通过: PreferenceStore UserDefaults JSON 编解码与持久化恢复验证通过")
         
         // Test 12: TriggerMode Click-only in IslandStateMachine
@@ -551,12 +537,12 @@ public enum SpikeRunner {
         }
         print("   ✅ Case 23 通过: 双屏独立面板生命周期与状态机物理隔离契约通过")
         
-        // Case 24: 岛内快捷隐藏与自定义排序流转契约 (Ticket #54)
+        // Case 24: 岛内图标自定义排序流转契约 (Ticket #54)
         let item1 = MenuBarItem(processIdentifier: 801, bundleIdentifier: "com.notchrail.test1", title: "Test1", nativeFrame: CGRect(x: 750, y: 0, width: 30, height: 24))
         let item2 = MenuBarItem(processIdentifier: 802, bundleIdentifier: "com.notchrail.test2", title: "Test2", nativeFrame: CGRect(x: 700, y: 0, width: 30, height: 24))
         let item3 = MenuBarItem(processIdentifier: 803, bundleIdentifier: "com.notchrail.test3", title: "Test3", nativeFrame: CGRect(x: 650, y: 0, width: 30, height: 24))
         
-        // 1. 验证自定义排序：即使 item1 在最右侧，当指定 order = ["com.notchrail.test3", "com.notchrail.test1"] 时，test3 必须第一，test1 第二，未排序的 test2 第三
+        // 验证自定义排序：即使 item1 在最右侧，当指定 order = ["com.notchrail.test3", "com.notchrail.test1"] 时，test3 必须第一，test1 第二，未排序的 test2 第三
         let orderSnap = OverflowCalculator.resolve(
             items: [item1, item2, item3],
             geometry: mockGeometry,
@@ -567,19 +553,6 @@ public enum SpikeRunner {
         check(orderSnap.overflowItems[1].bundleIdentifier == "com.notchrail.test1", "Test 24: test1 must be at index 1")
         check(orderSnap.overflowItems[2].bundleIdentifier == "com.notchrail.test2", "Test 24: unprioritized test2 must be at index 2")
         
-        // 2. 验证快捷隐藏：忽略 test1，overflowItems 中立即剔除，总数变为 2
-        let hideSnap = OverflowCalculator.resolve(
-            items: [item1, item2, item3],
-            geometry: mockGeometry,
-            ignoredBundleIDs: ["com.notchrail.test1"],
-            customItemOrder: ["com.notchrail.test3", "com.notchrail.test1"]
-        )
-        check(hideSnap.overflowItems.count == 2, "Test 24: Ignored item must be removed from overflowItems")
-        check(hideSnap.overflowItems[0].bundleIdentifier == "com.notchrail.test3", "Test 24: First item must remain test3")
-        check(hideSnap.overflowItems[1].bundleIdentifier == "com.notchrail.test2", "Test 24: Second item must be test2")
-        let hiddenItem = hideSnap.allItems.first { $0.bundleIdentifier == "com.notchrail.test1" }
-        check(hiddenItem?.displayMode == .ignored, "Test 24: test1 must be marked as ignored")
-        
-        print("   ✅ Case 24 通过: 岛内快捷隐藏与自定义排序流转契约通过")
+        print("   ✅ Case 24 通过: 岛内图标自定义排序流转契约通过")
     }
 }

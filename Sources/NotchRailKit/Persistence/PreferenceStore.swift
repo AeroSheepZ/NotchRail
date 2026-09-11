@@ -56,57 +56,6 @@ public final class PreferenceStore: ObservableObject {
         self.preferences = UserPreferences()
     }
     
-    // MARK: - 忽略 / 黑名单项管理
-    
-    /// 检查特定 Bundle ID 或持久化键是否被隐藏
-    public func isItemHidden(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        return preferences.ignoredBundleIDs.contains(trimmed)
-    }
-    
-    /// 快捷隐藏特定应用（加入黑名单）
-    public func hideItem(_ key: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
-        update { prefs in
-            if !prefs.ignoredBundleIDs.contains(trimmed) {
-                prefs.ignoredBundleIDs.append(trimmed)
-            }
-        }
-    }
-    
-    /// 取消隐藏特定应用（移出黑名单）
-    public func unhideItem(_ key: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
-        update { prefs in
-            prefs.ignoredBundleIDs.removeAll { $0 == trimmed }
-        }
-    }
-    
-    /// 切换忽略特定 Bundle ID 或键
-    public func toggleIgnored(bundleID: String) {
-        let trimmed = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
-        update { prefs in
-            if let index = prefs.ignoredBundleIDs.firstIndex(of: trimmed) {
-                prefs.ignoredBundleIDs.remove(at: index)
-            } else {
-                prefs.ignoredBundleIDs.append(trimmed)
-            }
-        }
-    }
-    
-    /// 清空所有黑名单忽略应用
-    public func clearAllIgnored() {
-        update { prefs in
-            prefs.ignoredBundleIDs.removeAll()
-        }
-    }
-    
     // MARK: - 自定义排序管理
     
     /// 更新自定义排序列表

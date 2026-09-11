@@ -71,7 +71,6 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public enum DisplayMode: String, Codable, Sendable {
         case nativeVisible   // 在原生菜单栏仍清晰可见
         case overflowed      // 因刘海遮挡或空间不足被挤出
-        case ignored         // 用户配置为忽略
     }
     
     public enum InteractionCapability: String, Codable, Sendable {

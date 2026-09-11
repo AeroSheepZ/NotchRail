@@ -10,11 +10,10 @@ public enum OverflowCalculator {
     /// 屏幕边缘溢出容差（pt）
     public static let SCREEN_EDGE_TOLERANCE: CGFloat = 5.0
     
-    /// 计算并标记所有菜单项的展示模式 (nativeVisible / overflowed / ignored)，并结合自定义排序注入快照
+    /// 计算并标记所有菜单项的展示模式 (nativeVisible / overflowed)，并结合自定义排序注入快照
     public static func resolve(
         items: [MenuBarItem],
         geometry: NotchGeometry,
-        ignoredBundleIDs: Set<String> = [],
         customItemOrder: [String] = []
     ) -> MenuBarSnapshot {
         let notchRightEdge = geometry.physicalNotchRect.maxX
@@ -33,16 +32,9 @@ public enum OverflowCalculator {
         let resolvedItems = items.map { item -> MenuBarItem in
             var updated = item
             
-            // 1. 用户忽略黑名单判定（支持 Bundle ID 或唯一窗口持久化 Key）
-            let itemKey = item.bundleIdentifier ?? item.persistentKey
-            if ignoredBundleIDs.contains(itemKey) || (item.bundleIdentifier.map { ignoredBundleIDs.contains($0) } ?? false) {
-                updated.displayMode = .ignored
-                return updated
-            }
-            
             let frame = item.nativeFrame
             
-            // 2. 纯几何物理溢出判定：
+            // 纯几何物理溢出判定：
             // - 左边界侵入碰撞安全边界 (frame.minX < collisionBoundary)
             // - 超出屏幕右边界 (frame.maxX > screenMaxX + SCREEN_EDGE_TOLERANCE)
             // - 超出屏幕左边界 (frame.maxX < screenMinX)

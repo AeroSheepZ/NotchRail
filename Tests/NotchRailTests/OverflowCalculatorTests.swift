@@ -229,44 +229,7 @@ final class OverflowCalculatorTests: XCTestCase {
         XCTAssertEqual(snapshot.visibleItems[0].displayMode, .nativeVisible)
     }
     
-    // MARK: - 场景 5: 黑名单项判定
-    func testIgnoredBundleIDs() {
-        let hiddenItem1 = MenuBarItem(
-            processIdentifier: 501,
-            bundleIdentifier: "com.hidden.one",
-            title: "Hidden1",
-            nativeFrame: CGRect(x: 1400, y: 955, width: 30, height: 24)
-        )
-        let hiddenItem2 = MenuBarItem(
-            processIdentifier: 502,
-            bundleIdentifier: "com.hidden.two",
-            title: "Hidden2",
-            nativeFrame: CGRect(x: 700, y: 955, width: 30, height: 24)
-        )
-        let normalItem = MenuBarItem(
-            processIdentifier: 503,
-            bundleIdentifier: "com.normal.item",
-            title: "Normal",
-            nativeFrame: CGRect(x: 1450, y: 955, width: 30, height: 24)
-        )
-        
-        let snapshot = OverflowCalculator.resolve(
-            items: [hiddenItem1, hiddenItem2, normalItem],
-            geometry: mockBuiltInGeometry,
-            ignoredBundleIDs: ["com.hidden.one", "com.hidden.two"]
-        )
-        
-        XCTAssertEqual(snapshot.overflowItems.count, 0)
-        XCTAssertEqual(snapshot.visibleItems.count, 1)
-        XCTAssertEqual(snapshot.visibleItems.first?.title, "Normal")
-        
-        let ignoredItems = snapshot.allItems.filter { $0.displayMode == .ignored }
-        XCTAssertEqual(ignoredItems.count, 2)
-        XCTAssertEqual(ignoredItems[0].displayMode, .ignored)
-        XCTAssertEqual(ignoredItems[1].displayMode, .ignored)
-    }
-    
-    // MARK: - 场景 6: 自定义排序与快捷隐藏流转
+    // MARK: - 场景 5: 自定义排序流转
     func testCustomItemOrderPrioritization() {
         let itemA = MenuBarItem(
             processIdentifier: 601,
@@ -287,11 +250,10 @@ final class OverflowCalculatorTests: XCTestCase {
             nativeFrame: CGRect(x: 700, y: 955, width: 30, height: 24)
         )
         
-        // 1. 测试自定义排序：指定 C 优先于 A，B 未指定则排在后面
+        // 测试自定义排序：指定 C 优先于 A，B 未指定则排在后面
         let snapshotWithOrder = OverflowCalculator.resolve(
             items: [itemA, itemB, itemC],
             geometry: mockBuiltInGeometry,
-            ignoredBundleIDs: [],
             customItemOrder: ["com.test.c", "com.test.a"]
         )
         
@@ -299,21 +261,6 @@ final class OverflowCalculatorTests: XCTestCase {
         XCTAssertEqual(snapshotWithOrder.overflowItems[0].bundleIdentifier, "com.test.c")
         XCTAssertEqual(snapshotWithOrder.overflowItems[1].bundleIdentifier, "com.test.a")
         XCTAssertEqual(snapshotWithOrder.overflowItems[2].bundleIdentifier, "com.test.b")
-        
-        // 2. 测试快捷隐藏：将 B 隐藏后即时剔除
-        let snapshotHidden = OverflowCalculator.resolve(
-            items: [itemA, itemB, itemC],
-            geometry: mockBuiltInGeometry,
-            ignoredBundleIDs: ["com.test.b"],
-            customItemOrder: ["com.test.c", "com.test.a"]
-        )
-        
-        XCTAssertEqual(snapshotHidden.overflowItems.count, 2)
-        XCTAssertEqual(snapshotHidden.overflowItems[0].bundleIdentifier, "com.test.c")
-        XCTAssertEqual(snapshotHidden.overflowItems[1].bundleIdentifier, "com.test.a")
-        let ignored = snapshotHidden.allItems.filter { $0.displayMode == .ignored }
-        XCTAssertEqual(ignored.count, 1)
-        XCTAssertEqual(ignored[0].bundleIdentifier, "com.test.b")
     }
     
     // MARK: - 边界辅助用例: 空列表稳健性
@@ -343,10 +290,6 @@ final class OverflowCalculatorTests: XCTestCase {
         
         suite.setUp()
         suite.testOutOfBoundsItems()
-        suite.tearDown()
-        
-        suite.setUp()
-        suite.testIgnoredBundleIDs()
         suite.tearDown()
         
         suite.setUp()
