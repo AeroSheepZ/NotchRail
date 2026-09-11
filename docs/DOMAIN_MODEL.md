@@ -81,7 +81,7 @@ classDiagram
         +Bool showMenuBarIcon
         +Double hoverExpandDelayMs
         +Double collapseDelayMs
-        +List~String~ ignoredBundleIDs
+        +List~String~ customItemOrder
         +Bool launchAtLogin
     }
 
@@ -123,7 +123,6 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public enum DisplayMode: String, Codable, Sendable {
         case nativeVisible   // 在原生菜单栏清晰可见
         case overflowed      // 因刘海遮挡或空间不足被挤出原生菜单栏
-        case ignored         // 用户配置为在岛内隐藏
     }
     
     public enum InteractionCapability: String, Codable, Sendable {
@@ -184,7 +183,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var showMenuBarIcon: Bool                    // 默认 true
     public var hoverExpandDelayMs: Double               // 默认 120.0ms (IslandTheme.Timing.HOVER_EXPAND_DELAY)
     public var collapseDelayMs: Double                  // 默认 300.0ms (IslandTheme.Timing.COLLAPSE_DELAY)
-    public var ignoredBundleIDs: [String]               // 默认 []
+    public var customItemOrder: [String]                // 默认 []
     public var launchAtLogin: Bool                      // 默认 false
 }
 ```
@@ -254,7 +253,7 @@ public enum OverflowCalculator {
     public static func resolve(
         items: [MenuBarItem],
         geometry: NotchGeometry,
-        ignoredBundleIDs: Set<String> = []
+        customItemOrder: [String] = []
     ) -> MenuBarSnapshot
 }
 ```
@@ -297,7 +296,7 @@ stateDiagram-v2
 | `ActiveDisplayChanged` | 鼠标跨屏移动至新显示器 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager`, `MouseMonitor` |
 | `NotchGeometryChanged` | 显示器插拔、分辨率变化或全屏空间切换 | `geometry: NotchGeometry` | `IslandWindowCoordinator`, `ScreenManager` |
 | `FullScreenStateChanged` | 前台应用切换全屏或 Space 切换 | `isFullScreen: Bool` | `IslandWindowCoordinator`, `MouseMonitor` |
-| `PreferencesChanged` | 用户设置（打开方式、外接屏模式、延迟、黑名单等）变动 | `preferences: UserPreferences` | `IslandStateMachine`, `IslandWindowCoordinator`, `StatusItemManager` |
+| `PreferencesChanged` | 用户设置（打开方式、外接屏模式、延迟、自定义排序等）变动 | `preferences: UserPreferences` | `IslandStateMachine`, `IslandWindowCoordinator`, `StatusItemManager` |
 | `PermissionStatusChanged` | 辅助功能或屏幕录制权限授予状态变化 | `isGranted: Bool` | `PermissionWindowCoordinator`, `SettingsView` |
 
 ---
@@ -309,10 +308,11 @@ stateDiagram-v2
 | ADR 编号 | 决策主题 | 影响模型 / 契约 | 核心要点 |
 | :--- | :--- | :--- | :--- |
 | **ADR 0001** | AX 空间几何反查映射 | `MenuBarAXResolver`, `AXEntry` | 解决扩展屏宿主代管进程 PID 假象，基于物理坐标反查真实应用 |
-| **ADR 0002** | 外接平直屏物理零刘海与视口借调 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` | 平直屏 `physicalNotchRect == .zero`，动态菜单碰撞，常态 0 像素隐形，展开采用 Floating Shelf（`topEarRadius = 0`），视口借调流转 |
+| **ADR 0002** | 外接平直屏物理零刘海与动态菜单碰撞 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` | 平直屏 `physicalNotchRect == .zero`，动态菜单碰撞，常态 0 像素隐形。**决议 3（视口借调）与平直托轨形态已被 ADR 0008 取代** |
 | **ADR 0003** | 纯物理几何判定并废弃 isOnScreen | `OverflowCalculator`, `MenuBarItem` | 纯几何 X 轴判定，杜绝 Space 切换引发的瞬态全量误溢出 |
 | **ADR 0004** | 零降级真实位图像素级镜像 | `CapturedIcon`, `IconResolver` | 逐窗原生截图、透明裁切与视觉相等比对，严禁彩色 Dock 图标降级 |
 | **ADR 0005** | 原生物理坐标合成事件精准分发 | `MenuBarItem`, `CGEvent` | 使用原位物理坐标通过 postToPid 触发原生下拉菜单 |
 | **ADR 0006** | 稳固常驻视口与硬件级穿透管理 | `IslandWindowCoordinator`, `MouseMonitor` | 84pt 吸顶常驻视口，动态控制 `ignoresMouseEvents`，透明区 100% 物理直通 |
 | **ADR 0007** | 全屏空间隐退与顶边缘极窄热区唤醒 | `FullScreenDetector`, `NotchGeometry` | 全屏下面板隐退，光标触碰顶边缘 $\le 2\text{pt}$ 热区平滑淡入唤醒 |
+| **ADR 0008** | 双面板独立拓扑与聚焦流转架构 | `IslandWindowCoordinator`, `IconResolver`, `MenuBarSyncCoordinator` | 废除单例视口借调与平直托轨形态；主屏 `primaryPanel` 常驻、副屏 `externalPanel` 独立隐形；展开形态统一 `topEarRadius = 5.0pt`；`appAssetVault` 跨屏图元注册；面板归属 Fail-Fast |
 

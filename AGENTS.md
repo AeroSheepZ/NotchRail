@@ -25,10 +25,12 @@ NotchRail/
 └── Sources/NotchRailKit/
     ├── Screen/                      # 屏幕拓扑、几何测绘、全屏 Space 检测与光标监听
     ├── MenuBar/                     # 窗口扫描 (SkyLight CGS)、AX 身份映射、溢出计算、图标截取管线
-    ├── Island/                      # 灵动岛 UI 视图体系、自适应动态耳翼、悬停/点击交互状态机
-    ├── Window/                      # NSPanel 悬浮面板、吸顶视口、Frame 同步与事件物理直通管理
+    ├── Island/                      # 灵动岛 UI 视图体系、自适应动态耳翼、流体拖拽重排、悬停/点击交互状态机
+    ├── Window/                      # 双面板 NSPanel 悬浮面板、吸顶视口、Frame 同步与事件物理直通管理
+    ├── Persistence/                 # UserPreferences 领域模型 (含 customItemOrder) 与 PreferenceStore 持久化
     ├── Settings/                    # 现代化偏好设置中心 (常规、悬停动效、应用管理、诊断)
     ├── Permissions/                 # 辅助功能 (AX) 与屏幕录制 (CGScreenCapture) 权限流
+    ├── Spike/                       # 真实硬件端到端诊断运行器 (Case 1~24)
     └── Bridging/                    # CoreGraphics / SkyLight 私有 CGS API 桥接
 ```
 
@@ -80,8 +82,8 @@ NotchRail/
 
 ### 2.4 纯物理几何判定 (Pure Physical Geometry)
 - 溢出项判定（`OverflowCalculator`）必须完全基于真实物理几何与碰撞判定：
-  - **内建物理刘海屏**：基于物理 X 坐标与刘海右侧过渡区安全余量（`notchRightEdge + 12pt`）；
-  - **平直外接显示器**：基于前台 App 菜单右边缘碰撞阈值（`appMenuRightEdge + 12pt`）；
+  - **内建物理刘海屏**：基于物理 X 坐标与刘海右侧过渡区安全余量（`notchRightEdge + 24pt`，即 `OverflowCalculator.NOTCH_CORNER_SAFETY_MARGIN`）；
+  - **平直外接显示器**：基于前台 App 菜单右边缘碰撞阈值（`appMenuRightEdge + 12pt`，即 `OverflowCalculator.APP_MENU_COLLISION_SAFETY_MARGIN`）；
 - **严禁依赖 `!item.isOnScreen`**：在 macOS 切换 Space 或全屏时，WindowServer 会将所有菜单项标记为未上屏，依赖该状态会导致菜单项被误判为全量溢出；
 - 仅当菜单项的水平跨度确实落在当前屏幕有效宽度内（`isWithinScreenSpan`）时参与计算，非本屏窗口绝不可标记为本屏溢出项。
 

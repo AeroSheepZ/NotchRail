@@ -1,84 +1,130 @@
-# Specification: NotchRail 0.0.6 - External Non-Notch Display Dynamic Collision Detection & On-Demand Floating Shelf
+# Specification: NotchRail v0.0.9 - 双屏多实例架构、能耗发热根治、极速事件驱动与岛内图标排序管理
 
-## Problem Statement
+> **文档状态**：v0.0.9 已闭环规格（归档自 Issue #50 及其 Ticket #51–#54）。
+> **版本历史**：见 `docs/DEVELOPMENT_PLAN.md` 的版本演进表。
+> **架构决策**：见 `docs/adr/0001` ~ `docs/adr/0007`。
+> **领域术语**：见 `CONTEXT.md`（本规格不重复定义术语）。
 
-macOS users utilizing external flat displays (or non-notch Mac hardware such as Mac mini, Mac Studio, or MacBook in clamshell mode) face fundamental architectural and user experience flaws in existing menu bar expansion tools:
+---
 
-1. **Artificial "Fake Notch" Occlusion**: Traditional utilities hardcode a synthetic 160pt notch in the center of non-notch flat displays, permanently rendering an unnatural pitch-black capsule that obscures clean desktop wallpapers, clutters the menu bar, and obstructs underlying browser tabs and editor headers.
-2. **Fabricated "Ghost Overflow"**: Because algorithms presume an imaginary notch obstacle in the center of the display, status bar items simply crossing the screen midpoint are falsely flagged as "overflowed" and duplicated inside the floating overlay, despite being 100% visible and unoccluded in the native menu bar.
-3. **Blindness to Real Native Menu Bar Collisions**: On macOS, real menu bar overflow without a physical notch occurs strictly when the left-hand application menu (File, Edit, View...) collides with the right-hand status item row, prompting macOS WindowServer to silently drop and unmap the leftmost third-party icons. Existing utilities fail to track this dynamic collision boundary, remaining completely oblivious when third-party icons are truly swallowed by heavyweight professional applications (e.g. Xcode, Photoshop, Logic Pro).
-4. **Single-Viewport Cross-Screen Tearing**: Because the system manages a single global `IslandPanel` instance, moving the cursor to an external monitor abruptly relocates the window frame, stripping away the compact capsule and dynamic yellow ear wings from the MacBook's physical notch and leaving it completely bare.
-5. **Accidental Expansion on Top-Edge Interactions**: Naive edge triggers that listen across the entire display width intercept user clicks targeting top-left application menus (File, Edit) or top-right system status items (Clock, Wi-Fi, Control Center), causing disruptive overlays during standard menu usage.
-6. **False Triggers in Vertical Multi-Monitor Setups**: When displays are stacked vertically, moving the mouse downwards from an upper display crosses the lower display's top boundary at high velocity, inadvertently triggering an unwanted expansion without dwell intent.
-7. **Full-Screen Space Collision**: When an external display is in full-screen space (e.g. full-screen video or IDE), touching the top edge causes both the macOS native full-screen menu bar and the floating island to drop down simultaneously, resulting in double dark bars occluding the clock and native menus.
+## 1. Problem Statement
 
-## Solution
+用户在使用 NotchRail 进行全天候及多显示器日常开发时，面临三大核心体验与系统级性能问题：
 
-NotchRail 0.0.6 introduces **External Non-Notch Display Dynamic Collision Detection & On-Demand Floating Shelf**:
+1. **隔夜长时运行严重发热与系统卡顿**：应用程序在后台运行数小时后，机身持续发热、风扇高转，并出现系统级操作卡顿。根本诱因在于系统内存在无条件 2.5 秒常驻轮询心跳，每次心跳无差别截取数十个窗口并执行底层 `CGContext` 逐像素循环遍历；叠加鼠标移动事件缺乏节流，高频抛出海量异步任务阻塞主线程，CPU 无法进入低功耗休眠。
+2. **多显示器聚焦迁移导致的「余光小胶囊消失」视觉缺陷**：由于全局仅维护单一视口窗口实例，当用户将鼠标或焦点切换至外接平直显示器时，窗口实体被强制迁往外接屏（常态隐形挂起）；此时用户望向 MacBook 内建屏幕时，物理刘海下方原本常驻的紧凑胶囊与黄色溢出徽标完全消失，破坏了刘海屏原生的常态视觉锚点。
+3. **岛内展开项缺乏自定义排序能力**：灵动岛展开时，图标完全按 WindowServer 物理扫描顺序被动排列，用户无法在岛内直接拖拽重排以定制自己的视觉顺序。
+
+---
+
+## 2. Solution
+
+v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体系与岛内图标轻量排序管理**：
 
 ```
-                              [User Multi-Display Workspace]
-                                             │
-        ┌────────────────────────────────────┴────────────────────────────────────┐
-        ▼                                                                         ▼
-【MacBook Built-In Notch Screen】                                         【External Flat Display (Non-Notch)】
-• Physical Invariant: Camera cutout centered on top                       • Physical Invariant: Zero hardware obstructions
-• Overflow Formula: minX < notchRightEdge + 24pt                          • Overflow Formula: minX < (AppMenuBoundary + 12pt)
-• Idle State: Permanent black capsule + yellow ear wings                  • Idle State: 100% Invisible (Zero-presence, zero fake notch)
-• Expansion Form: Liquid drop-down fluid expansion                        • Expansion Form: Central 240pt hot-zone 120ms dwell reveal (Unified Island)
-• Viewport Ownership: Permanent home anchor of IslandPanel                • Viewport Ownership: Focus Following (externalStealth when idle, reveals in-place)
+                        [User Multi-Display Workspace]
+                                      │
+        ┌─────────────────────────────┴─────────────────────────────┐
+        ▼                                                           ▼
+【MacBook Built-In Notch Screen】                        【External Flat Display (Non-Notch)】
+• Physical Invariant: Camera cutout centered on top      • Physical Invariant: Zero hardware obstructions
+• Panel Ownership: 常驻 primaryPanel (permanent guard)   • Panel Ownership: 独立 externalPanel (independent)
+• Overflow Formula: minX < notchRightEdge + 24pt         • Overflow Formula: minX < (AppMenuBoundary + 12pt)
+• Idle State: Permanent black capsule + yellow wings     • Idle State: externalStealth (alpha 0.0, 100% click-through)
+• Expansion Form: Liquid drop-down fluid expansion       • Expansion Form: Central 240pt hot-zone 120ms dwell reveal
+• Expanded Visual: topEarRadius = 5.0pt 纯黑吸光底座      • Expanded Visual: 与刘海屏 100% 统一（topEarRadius = 5.0pt）
 ```
 
-1. **Zero-Presence Idle State on Flat Displays**: On non-notch displays (`hasPhysicalNotch == false`), NotchRail completely eliminates fixed fake notch placeholders. The idle state is 100% invisible (`alpha = 0.0`, `ignoresMouseEvents = true`), leaving the native menu bar pristine and unobstructed.
-2. **Dynamic Application Menu Collision Detection**: Replaces the hardcoded 160pt center virtual notch with real-time tracking of the active application's menu bar right boundary (`AppMenuBoundary`). A status item is deemed an `OverflowItem` on external displays if and only if its horizontal position collides with the active application's menu boundary (`item.minX < AppMenuBoundary + 12pt`) or exceeds the physical display bounds.
-3. **Restricted Top-Center Hot-Zone with Dwell Gate**: An edge awakening zone restricted to the top center ($\pm 120\text{pt}$ horizontally, $\le 4\text{pt}$ vertically) with a mandatory 120ms dwell filter. Users moving the cursor across the top edge or interacting with native menus (File/Edit or Clock/Wi-Fi) will never accidentally trigger the island.
-4. **Focus Following Architecture & Unified Dynamic Island Design**: 
-   - **Visual Identity**: The concept of a flat-docked `FloatingShelf` without horn ears (`topEarRadius = 0.0`) is completely abolished. The expanded appearance on external flat displays is **100% visually unified with the built-in notch island**, maintaining `topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)`, pure black light-absorbing base, and subtle glowing stroke;
-   - **Focus Following (Abolishing Viewport Leasing)**: The "Viewport Leasing" terminology and mechanics are eliminated. Ownership flows with active screen focus. On flat external displays, the folded idle state is strictly `externalStealth` (100% invisible and click-through), expanding in-place when awakened, and fading out in-place when collapsed.
-   - **Default Trigger Mode**: `UserPreferences.triggerMode` is formally established as `.hoverAndClick` (hover or click) by default.
-5. **Immediate Dismiss on Outside Click**: Clicking anywhere outside the expanded island immediately dismisses the overlay with zero click lag to underlying applications.
-6. **Zero-Overflow Mute Gate**: If an external display has zero collided/overflowed items, the top-center edge hot-zone remains strictly dormant, ensuring zero unwanted popups.
-7. **Full-Screen Space Yielding**: In full-screen spaces on external displays, edge detection yields priority to the native macOS descending menu bar, avoiding double dark bar occlusion.
+### 2.1 双面板拓扑架构（Multi-Panel Topology）
 
-## User Stories
+- 彻底废除单例窗口在多屏之间的流转迁移；
+- MacBook 物理刘海屏由 **主面板 `primaryPanel` 永久守护**，常驻呈现紧凑态刘海胶囊与动态溢出计数；
+- 外接平直显示器由 **副面板 `externalPanel` 独立常驻**，折叠常态 100% 隐形透明且鼠标硬件级物理直通，触碰顶部中央受限热区时独立就地展开；
+- 双屏互不借调、互不抢夺，实现真正的双屏独立视觉与交互共存。
 
-1. As an external 4K monitor user, I want zero black notch capsules rendered at the top of my display, so that my desktop wallpaper and native menu bar remain completely clean and unoccluded.
-2. As a MacBook user connected to an external screen, I want the compact island and yellow overflow badge to remain visible on my MacBook's physical notch when my mouse is on the external display, so that I can glance at my laptop and always see my overflow status.
-3. As a developer using Xcode with extensive menus on an external monitor, I want NotchRail to detect when Xcode's menus push my third-party status icons off the screen, so that those swallowed icons are accurately captured in the overflow list.
-4. As a user working in Finder with only four short menu titles, I want NotchRail to recognize that my menu bar has ample free space, so that none of my visible status icons are duplicated into the floating shelf.
-5. As an external display user with no occluded icons, I want the top-center edge of my screen to ignore mouse passes, so that I am never disturbed by an empty overlay appearing.
-6. As a user with an occluded icon on my external display, I want moving my mouse to the top-center edge and pausing for a moment (120ms) to smoothly reveal the floating shelf, so that I can easily access my hidden tools.
-7. As a user rapidly flicking my cursor across the top edge of my screen, I want NotchRail to ignore the gesture, so that rapid mouse movements never trigger accidental expansions.
-8. As a user clicking the Apple logo or File menu in the top-left corner, I want the top-center expansion to remain dormant, so that my standard menu interactions are never intercepted.
-9. As a user checking the clock or Wi-Fi status in the top-right corner, I want the expansion trigger to remain dormant, so that system tray clicks work normally without obstruction.
-10. As a user viewing the expanded floating shelf on an external flat monitor, I want the shelf to dock flush against the top edge without curved ear horns, so that it looks like a native macOS floating HUD rather than a phone cutout.
-11. As a user who expanded the floating shelf on an external monitor, I want clicking any of the mirrored icons to trigger its native menu directly at its physical window coordinates, so that I can configure my apps as usual.
-12. As a user who accidentally expanded the floating shelf, I want clicking anywhere outside the shelf on my web browser to immediately dismiss the shelf while registering my browser click, so that my workflow is uninterrupted.
-13. As a user moving my mouse away from the floating shelf, I want it to smoothly slide up and fade out after a 300ms grace period, so that my screen returns to its clean state.
-14. As a clamshell mode user with my MacBook lid closed, I want NotchRail to operate normally on my external monitor without crashing or expecting a non-existent physical notch, so that desktop docking setups work seamlessly.
-15. As a vertical multi-monitor user with an external screen mounted above my MacBook, I want moving my cursor downwards across the display border to avoid false triggers, so that vertical navigation is smooth.
-16. As a full-screen video watcher on an external display, I want pushing my mouse to the top edge to prioritize revealing the native macOS menu bar rather than covering it with a floating shelf, so that I can check the system clock without visual obstruction.
-17. As a multi-monitor user switching between displays, I want the active application's menu boundary to be evaluated specifically against the targeted display's coordinate span, so that multi-display coordinate offsets never corrupt collision math.
-18. As a performance-conscious user, I want application menu boundary queries to be event-driven rather than polled on every mouse move, so that my CPU and battery consumption remain negligible.
-19. As a user with an ultra-wide (34" or 49") display, I want the floating shelf to anchor in the horizontal center with a balanced maximum width (up to 760pt), so that icons remain easily accessible and do not stretch across the entire screen.
-20. As a user switching dark and light desktop wallpapers, I want the floating shelf to utilize native macOS ultra-thin frosted glass materials, so that it blends seamlessly with any wallpaper tone.
-21. As a user changing display resolution or scaling settings, I want NotchRail to immediately recalculate screen boundaries and the menu collision line, so that overflow items remain accurately identified.
-22. As a user with dynamic menu bar utilities (e.g. live CPU meter, upload/download network speeds), I want numerical updates inside the floating shelf to refresh without causing the entire overlay to jitter or jump in size.
-23. As a user in macOS System Settings configuring displays, I want moving the menu bar arrangement to take effect immediately without needing to restart NotchRail.
-24. As a user running DaVinci Resolve or Adobe Premiere with heavy custom menu items, I want NotchRail to accurately extract the furthest right menu boundary even when third-party menus have custom accessibility labels.
-25. As a user returning from an external screen back to my MacBook, I want the compact island on my laptop's physical notch to immediately become interactive without lag.
-26. As a user who customized "Ignored Apps" in preferences, I want those ignored items to remain hidden from the external floating shelf just as they are on the MacBook notch.
-27. As a user invoking NotchRail via the macOS status bar tray menu, I want clicking "Scan & Expand" to expand the floating shelf on the currently focused display.
-28. As a QA engineer running automated tests, I want all overflow math to be testable with zero dependencies on physical screens, so that CI/CD runs with 100% predictability.
+### 2.2 能耗与发热根治体系（Zero-Overhead Event-Driven Pipeline）
 
-## Implementation Decisions
+- **按需休眠心跳（Smart Heartbeat）**：灵动岛折叠且光标远离热区时彻底停用高频轮询，后台空闲 CPU 占用严格压至 0.0%；
+- **像素重绘与裁剪 Dirty-Check**：引入窗口指纹与图元缓存校验，已捕获的静态图标坚决不再重复创建 `CGContext` 与像素扫描；
+- **全局鼠标移动采样节流（16ms Throttle）**：消除鼠标监听闭包内的异步并发任务堆分配，引入时间戳节流至 16ms（60Hz 采样上限），并在屏幕中下部无关区域实行 0 开销快速熔断；
+- **无障碍发现事件驱动化**：以 `NSWorkspace` 的应用启动与退出系统通知为触发源动态维护菜单项进程池，彻底终结定时全系统进程全量探测。
 
-### 1. Dual-Track Geometric Collision Resolver
+### 2.3 岛内流体拖拽重排与排序偏好持久化
 
-Structurally modify the overflow calculation engine to enforce two mutually exclusive physical tracks as a pure function:
+- 保持 100% 原生菜单物理事件派发不变，不侵入、不拦截第三方应用的原生左键与右键弹窗逻辑；
+- 灵动岛展开态下支持直接拖拽图标进行流体位移重排，实时更新自定义排序索引并原子持久化。
+
+### 2.4 双轨物理自律与全局应用图元注册表（Application Asset Vault）
+
+- 各显示器轨道 100% 独立闭环，各管本屏几何、窗口扫描与溢出判定，彻底杜绝跨屏窗口寻窗与借调；
+- 针对 macOS WindowServer 在非聚焦屏幕暂停光栅化的机制，图元层建立以系统唯一 `bundleIdentifier` 为索引的应用资产注册表；
+- 任何激活屏幕成功截取即登记入库，非激活屏幕展开灵动岛时直接凭本轨项的 Bundle ID 直出真实高清位图，0 兜底、0 错配、0 延迟。
+
+---
+
+## 3. User Stories
+
+### 3.1 多显示器双面板独立架构
+1. 作为双屏用户，我希望紧凑胶囊与黄色溢出计数在我把鼠标与活动窗口移到外接屏后**依然常驻 MacBook 物理刘海**，以便随时瞥见笔记本的溢出状态。
+2. 作为在全屏编辑器工作的外接屏用户，我希望外接屏拥有独立隐形窗口，仅在我主动悬停顶部中央热区时才唤醒，以便永不打扰当前工作区。
+3. 作为 MacBook 用户，我希望悬停笔记本刘海时其灵动岛在本屏平滑展开，且完全不影响外接屏的隐形待机态，以便两屏视觉完全独立。
+4. 作为多屏用户，我希望焦点在显示器之间移动时**零窗口撕裂、零徽标闪烁、零视觉瞬移**，以便体验与 macOS 原生基础设施一致。
+5. 作为合盖模式用户，我希望 NotchRail 自动禁用内建面板并仅保持外接面板活跃，以便不产生幻影窗口占用内存或拦截事件。
+
+### 3.2 能耗、发热与长时稳定性
+6. 作为电池供电过夜的用户，我希望灵动岛收起且空闲时 NotchRail 占用 0.0% CPU，以便机器保持凉爽、静音并延长续航。
+7. 作为关注性能的开发者，我希望窗口指纹未变的状态项不再创建临时 `CGContext` 与扫描像素缓冲，以便彻底消除无谓的内存带宽与 CPU 开销。
+8. 作为 ProMotion 120Hz 屏或高回报率鼠标用户，我希望鼠标移动事件被节流至 16ms 上限且不在堆上分配异步闭包，以便主线程 RunLoop 始终保持响应。
+9. 作为日常用户，我希望状态项发现严格响应应用启动与退出系统通知，以便应用永不周期性扫描整个系统进程表。
+10. 作为动态状态项用户（网速表、时钟等），我希望系统仅在宽松节拍下选择性刷新动态项、静态图标完全不动，以便数字准确又不烧 CPU。
+11. 作为长时运行用户，我希望 NotchRail 在 24 小时以上运行中保持扁平内存占用，无字典无界增长或 Combine 订阅泄漏。
+
+### 3.3 岛内图标管理与拖拽排序
+12. 作为拥有数十个菜单栏应用的用户，我希望在展开的灵动岛内直接拖拽图标，以便以流体布局动画直观定制视觉顺序。
+13. 作为已定制图标优先级的用户，我希望偏好的状态项出现在岛内行的前部，以便常用工具始终最易触及。
+14. 作为点击岛内任意镜像图标的用户，我希望其原生下拉菜单或配置浮层从所属应用真实弹出，以便所有原始上下文菜单、子菜单与快捷键继续按设计工作。
+
+---
+
+## 4. Implementation Decisions
+
+### 4.0 核心领域契约不变量（Core Domain Contract Invariants）
+
+1. **彻底废除 FloatingShelf（平直托轨）概念**
+   - 旧草案中「外接屏无喇叭弧平直托轨（`topEarRadius = 0.0`）」已被彻底废除；
+   - **新不变量**：扩展屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)` 经典外展喇叭弧与纯黑吸光底座；
+   - 该不变量覆盖所有展开态渲染路径，包括 `IslandBackground` 的形态推导。
+2. **废除 Viewport Leasing（视口借调流转）术语与逻辑**
+   - 旧设计中「向主屏借调视口」导致主屏收起与外接屏展开的徽标闪烁冲突；
+   - **新不变量**：确立为 **聚焦流转架构（Focus Following Architecture）**，面板归属权由屏幕焦点唯一决定；折叠常态外接屏处于 `externalStealth`（100% 隐形穿透），展开时原位升起、收起时原位淡出。
+3. **设置项领域默认契约更新**
+   - `UserPreferences.triggerMode` 领域默认值正式固化为 `.hoverAndClick`（悬停或点击）。
+
+### 4.1 视口拓扑与管理：双独立面板模型
+
+- **多屏解耦决策**：淘汰单例 Panel 视口迁移模型，引入具备物理独立性的主屏面板与外接屏面板生命周期管理；
+- **全拓扑自适应**：智能适配 MacBook 刘海、单平直屏（Mac mini / 合盖模式）、双平直外接屏；主屏由主面板守护，扩展屏由副面板守护；
+- **各屏状态独立约束**：每一台物理屏幕分配独立的几何描述实体与展示状态机；主刘海屏与外接平直屏的展开、收起、全屏唤醒状态彼此物理隔离；
+- **硬件穿透统一管线**：各面板独立遵循各自屏幕光标坐标的 Hit-Test 穿透判定，非交互像素区 100% 物理直通底层应用；
+- **Fail-Fast 归属契约**：`stateMachine(for:)` / `panel(for:)` 仅在目标屏确为对应面板锚定屏时返回实例，屏幕无归属面板时返回 `nil`，**严禁把面板回退返回给非其锚定的屏幕几何**。
+
+### 4.2 扫描管线与心跳：事件驱动按需休眠与双轨自闭环
+
+- **三档能耗节拍架构**：
+  - `Dormant`（完全休眠态）：所有面板均处于折叠收起态且光标位于屏幕中下部时，心跳定时器完全挂起，后台无轮询；
+  - `Armed`（就绪警戒态）：光标移入屏幕顶边缘热区时瞬间激活单次极速增量扫描与预热，确保展开第 0 帧位图命中；离开顶区立即回退 `Dormant`（带 3.0s 超时保护）；
+  - `Active`（展开活动态）：任一面板处于展开展示态时按 2.0s 适度心跳执行轻量增量差分检测，收起后经 1.5s 冷却回归 `Dormant`。
+- **AX 空间映射缓存契约**：缓存有效期 ≥ 60s，由进程启动 / 退出事件与窗口扫描发现的候选 PID 定向失效；稳态下不再随心跳周期重复执行 AX 全表遍历。
+- **候选进程池维护**：候选池执行一次冷启动全量发现后，完全由 `NSWorkspace.didLaunchApplicationNotification` / `didTerminateApplicationNotification` 与窗口扫描的 `registerCandidatePID` 增量维护，**不存在定时全系统进程遍历机制**。
+- **批量窗口提取**：窗口层级与几何信息查询采用单次批量获取，消除循环内逐个单独 C 系统调用。
+- **双轨物理自律**：各显示器轨道绝对独立闭环，各管本屏几何、窗口扫描与溢出判定；代码中不存在 `pairedWindowID` 与跨屏寻窗。
+- **全局应用图元注册表**：`IconResolver` 维护全局 `appAssetVault: [BundleID: CapturedIcon]`；任何激活屏幕成功截取真实位图时原子入库，非激活屏幕展开时凭自身确凿的 `bundleIdentifier` 直出真实位图，无配对、0 兜底、0 错配。
+
+### 4.3 双轨几何碰撞解析器（Dual-Track Geometric Collision Resolver）
+
+溢出计算引擎作为纯函数强制执行两条互斥物理轨道：
 
 ```swift
-// Decision Prototype Shape: Dual-Track Resolution Contract
 public enum OverflowCalculator {
     public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 24.0
     public static let APP_MENU_COLLISION_SAFETY_MARGIN: CGFloat = 12.0
@@ -87,137 +133,103 @@ public enum OverflowCalculator {
     public static func resolve(
         items: [MenuBarItem],
         geometry: NotchGeometry,
-        ignoredBundleIDs: Set<String> = []
-    ) -> MenuBarSnapshot {
-        let isNotch = geometry.hasPhysicalNotch
-        let collisionBoundary: CGFloat = isNotch
-            ? (geometry.physicalNotchRect.maxX + NOTCH_CORNER_SAFETY_MARGIN)
-            : ((geometry.appMenuRightEdge ?? (geometry.screenFrame.minX + 180.0)) + APP_MENU_COLLISION_SAFETY_MARGIN)
-
-        let screenMinX = geometry.screenFrame.minX
-        let screenMaxX = geometry.screenFrame.maxX
-
-        // Item overflows if its left edge breaches the collision boundary
-        // or extends outside physical display bounds
-        ...
-    }
+        customItemOrder: [String] = []
+    ) -> MenuBarSnapshot { ... }
 }
 ```
 
-- **Physical Notch Track (`hasPhysicalNotch == true`)**:
-  - Bound by hardware notch geometry: `item.nativeFrame.minX < (notchRightEdge + 24.0)`.
-- **Flat Non-Notch Track (`hasPhysicalNotch == false`)**:
-  - Bound by dynamic application menu collision: `item.nativeFrame.minX < (appMenuRightEdge + 12.0)`.
-  - `physicalNotchRect` for flat displays is permanently set to `.zero`.
+- **物理刘海轨道（`hasPhysicalNotch == true`）**：`item.nativeFrame.minX < (notchRightEdge + 24.0)`；
+- **平直非刘海轨道（`hasPhysicalNotch == false`）**：`item.nativeFrame.minX < (appMenuRightEdge + 12.0)`，`physicalNotchRect` 永久 `.zero`；
+- **严禁依赖 `!item.isOnScreen`**：Space / 全屏切换时 WindowServer 会将所有菜单项标记为未上屏。
 
-### 2. Event-Driven Application Menu Boundary Extraction (`AppMenuBoundary`)
+### 4.4 事件驱动应用菜单边界提取（AppMenuBoundary）
 
-- Bind menu boundary detection strictly to system workspace events:
-  - `NSWorkspace.didActivateApplicationNotification` (frontmost app changed)
-  - `NSWorkspace.activeSpaceDidChangeNotification` (Space/Desktop changed)
-  - `NSApplication.didChangeScreenParametersNotification` (display topology changed)
-- Extraction logic executes asynchronously in background tasks:
-  1. Retrieve frontmost application PID (`NSWorkspace.shared.frontmostApplication.processIdentifier`).
-  2. Query `kAXMenuBarAttribute` $\implies$ `kAXChildrenAttribute` (`[AXUIElement]`).
-  3. Locate the rightmost child item and compute its Quartz coordinates: `item.position.x + item.size.width`.
-  4. Cache value in `ScreenManager.frontmostAppMenuMaxX`.
-- Baseline fallback: If accessibility returns empty or the active application is Finder, fall back to `screen.frame.minX + 180.0pt` (standard Apple logo + app title reservation).
+- 绑定 `NSWorkspace.didActivateApplicationNotification`、`NSWorkspace.activeSpaceDidChangeNotification` 与 `NSApplication.didChangeScreenParametersNotification`；
+- 后台异步提取前台应用 `kAXMenuBarAttribute` → `kAXChildrenAttribute`，取最右子项 `position.x + size.width` 缓存至 `ScreenManager.frontmostAppMenuMaxX`；
+- 基准回退：AX 返回为空或前台为访达时，回退 `screen.frame.minX + 180.0pt`（Apple 标志与应用标题预留）。
 
-### 3. Focus Following Architecture & Unified Dynamic Island Design
+### 4.5 图标流体拖拽重排与偏好模型
 
-Manage the global `IslandPanel` viewport through an active focus-driven lifecycle:
+- **数据结构**：`UserPreferences.customItemOrder: [String]`，持久化用户自定义唯一标识排序数组，须保证向前向后编解码兼容（缺失键回退空数组）；
+- **排序契约**：溢出计算与快照构建管线优先应用自定义排序权重，未排序项按物理空间坐标依序自然追加；
+- **交互契约**：展开态通过 `ReorderableIconRow` 支持原生手势拖拽流体位移重排；拖拽结束原子更新 `customItemOrder` 并同步持久化至 UserDefaults；
+- **零侵入契约**：不拦截次级点击（Right Click / Control Click），底层 `CGEvent.postToPid` 原生菜单物理派发机制完全不变，第三方应用原生弹出菜单 100% 完整。
 
-```
-[Normal Idle State]
-   - Built-In Notch Screen: IslandPanel anchored to MacBook Physical Notch (alpha = 1.0, compact capsule active)
-   - External Flat Display: Idle state is externalStealth (alpha = 0.0, ignoresMouseEvents = true, 100% physical click-through)
-        │
-        ▼ (User focuses External Display & hovers top-center hot-zone for >= 120ms with overflowCount > 0)
-[In-Place Expansion on External Display]
-   - Panel frame anchored to External Display top-center (x = centerX - width/2, y = screenMaxY - 84)
-   - Presentation: Unified Dynamic Island with topEarRadius = 5.0pt, pure black base, alpha = 1.0, ignoresMouseEvents = false
-        │
-        ▼ (Mouse leaves for 300ms OR user clicks outside)
-[In-Place Collapse & Fade]
-   - Panel collapses smoothly in-place with slide-up fade (0.2s duration)
-   - When idle on flat external display, returns cleanly to externalStealth (alpha = 0.0, ignoresMouseEvents = true)
-```
+### 4.6 边缘交互与中央热区
 
-- **Clamshell Mode**: When no display possesses a physical notch, the panel operates in external display focus-following mode, expanding in place on demand and fading out completely when idle.
-- **Default Trigger Mode**: The system-wide domain default for `UserPreferences.triggerMode` is firmly locked to `.hoverAndClick`.
+- **空间约束**：水平跨度为屏幕中心 ± 120pt（合计 240pt）；垂直深度为屏幕顶边缘 ≤ 4pt（刘海屏另见顶边缘唤醒热区）；
+- **时间过滤（120ms 停留）**：光标进入热区启动一次性 120ms 定时器；到期前离开或高速竖穿（> 300pt/s）则取消且零状态变更；
+- **零溢出静音门**：`effectiveSnapshot.overflowCount == 0` 时热区求值立即中止。
 
-### 4. Edge Interaction & Central Hot-Zone Architecture
+### 4.7 视觉呈现与形态
 
-- **Spatial Constraints**:
-  - Horizontal span: Screen center $\pm 120\text{pt}$ (total 240pt width).
-  - Vertical depth: Screen top edge $\le 4\text{pt}$.
-- **Temporal Filter (120ms Dwell)**:
-  - Cursor entering hot-zone initiates a 120ms non-repeating timer (`dwellTimer`).
-  - If cursor exits or moves at high velocity ($> 300\text{pt/s}$ vertical traversal) before expiration, timer cancels with zero state mutation.
-- **Zero-Overflow Mute Gate**:
-  - If `effectiveSnapshot.overflowCount == 0`, hot-zone evaluation aborts immediately, guaranteeing zero unwanted popups.
+- 外接平直屏展开态与刘海屏灵动岛**视觉完全统一**：`topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)`、纯黑吸光底座、微光渐变描边；
+- 折叠常态：`alpha = 0.0`、`ignoresMouseEvents = true`，底层窗口 100% 物理直通。
 
-### 5. Outside Click Dismissal (Dismiss on Click Outside)
+---
 
-- Extend global mouse click monitor (`MouseMonitor.handleClick`):
-  - When `IslandStateMachine.currentState.isExpanded == true`:
-  - Check whether click location falls within the active floating shelf interactive bounds (`interactiveBounds.insetBy(dx: -4, dy: -4)`).
-  - If outside, immediately call `IslandStateMachine.shared.triggerCollapse()`.
-  - The click event itself continues unhindered to the underlying application.
+## 5. Testing Decisions
 
-### 6. Visual Presentation & Form Factor on Flat Displays
+### 5.1 良好测试准则
+- **外部行为黑盒验证**：测试严禁依赖私有内部实现细节，仅验证外部输入（屏幕拓扑变化、光标物理移动、系统应用启动事件、用户偏好调整）与外部契约（快照产物、面板几何、可见性透明度、事件穿透标志、排序顺序）的一致性；
+- **测试必须守护生产契约**：被测函数的默认参数即生产调用语义，严禁出现「单测验证默认分支、生产显式传入另一阈值」的契约脱节；
+- **长时能耗与心跳契约**：必须引入针对心跳休眠门禁的断言，确保静止折叠态下定时器处于非激活状态。
 
-- In `IslandBackground`:
-  - When target screen has `hasPhysicalNotch == false`, enforce `topEarRadius = 0.0`.
-  - Render top edge flush against the display border with smooth bottom corner radii (24pt).
-  - Material: Native macOS HUD frosted glass (`.ultraThinMaterial`) with subtle border highlight (`white.opacity(0.15)`) and system soft shadow (`color: black.opacity(0.18), radius: 12, y: 4`).
+### 5.2 重点测试模块与接缝
 
-## Testing Decisions
+1. **视口拓扑接缝（Window Coordinator Seam）**
+   - 模拟双屏拓扑（主物理刘海屏 + 外接平直大屏）；
+   - 验证主屏面板常驻保持 `compact` 几何，而外接屏面板处于穿透态，光标在外接屏操作时主屏面板状态严格不受影响；
+   - 验证无归属面板的屏幕调用 `panel(for:)` / `stateMachine(for:)` 返回 `nil`（Fail-Fast）。
+2. **能耗与节流接缝（Monitor & Throttling Seam）**
+   - 向鼠标监听器注入 1000 次高频微小位移，验证下游几何碰撞判定调用次数严格受限于节流窗口且不产生异步任务堆积；
+   - 验证空闲收起状态下无重复截图与像素处理调用。
+3. **图元缓存与增量比对接缝（Icon Resolver Seam）**
+   - 验证相同窗口指纹的多次解析直接命中内存缓存，且不重复创建图形上下文。
+4. **自定义排序接缝（Overflow Calculator Seam）**
+   - 验证 `customItemOrder` 对溢出项输出顺序的确定性约束。
+5. **几何热区接缝（Geometry Seam）**
+   - 验证中央 240pt 热区的水平防误触边界与 4pt 垂直阈值契约；
+   - 验证多显示器水平偏移下热区坐标正确换算。
 
-### What Makes a Good Test
-- Tests must verify observable contracts and mathematical invariants without inspecting internal actor state or mock implementations.
-- Geometry and collision calculations must execute as pure functions using deterministic mock fixtures (`NotchGeometry` and `MenuBarItem` structs).
+### 5.3 既有实践（Prior Art）
+- `Tests/NotchRailTests/ScreenManagerTests.swift` 的多屏几何测试；
+- `Tests/NotchRailTests/MouseMonitorTests.swift` 的热区、防抖状态机与节流测试；
+- `Tests/NotchRailTests/OverflowCalculatorTests.swift` 的双轨碰撞与自定义排序测试；
+- `Sources/NotchRailKit/Spike/SpikeRunner.swift` 的真实硬件端到端诊断体系（Case 1~24）。
 
-### Tested Modules & Test Seams
+---
 
-1. **Primary Seam: `OverflowCalculator.resolve`**:
-   - *Test Case 1 (Hardware Notch Baseline)*: Ensure physical notch displays maintain the exact 24pt corner safety margin and unchanged snapshot counts.
-   - *Test Case 2 (Flat Display Wide Open Space)*: 2560pt display with short App menu ($x = 400$) and 15 items spanning $x = 1800 \dots 2560 \implies$ Verify `overflowCount == 0` (zero ghost overflow).
-   - *Test Case 3 (Flat Display Real Xcode Collision)*: 1920pt display with heavy App menu ($x = 1100$) and items extending leftwards to $x = 1050 \implies$ Verify items with $minX < 1112$ are marked `.overflowed` and rightmost items remain `.nativeVisible`.
-   - *Test Case 4 (Out-of-Screen Handling)*: Items with $maxX > screenMaxX + 5$ or $maxX < screenMinX$ marked `.overflowed`.
-   - *Test Case 5 (Ignored Bundle IDs)*: Items in ignored list strictly marked `.ignored`.
-
-2. **Secondary Seam: `IslandStateMachine` State Flows**:
-   - Dwell timer expiration triggers `.extended`.
-   - Early exit before 120ms resets to `.compact`.
-   - Mouse leave triggers `.collapsing` with 300ms grace period.
-   - Mouse re-entry during collapsing cancels collapse timer.
-   - External click invokes `triggerCollapse()` immediately.
-
-3. **Tertiary Seam: `ScreenManager` Topology**:
-   - Non-notch display reports `physicalNotchRect == .zero` and `hasPhysicalNotch == false`.
-   - Primary geometry selection correctly identifies physical notch screen even when external screen is set as main display.
-
-### Prior Art
-- Builds directly upon `OverflowCalculatorTests.swift`, `IslandStateMachineTests.swift`, and `ScreenManagerTests.swift`.
-
-## Failure Pre-Mortem & Mitigation Matrix
+## 6. Failure Pre-Mortem & Mitigation Matrix
 
 | Failure Mode | Early Warning Signal | Root Cause | Architectural Mitigation |
 | :--- | :--- | :--- | :--- |
-| **AX IPC Hang / Latency Spike** | Main thread hitching $> 50\text{ms}$ on app switch | Synchronous `AXUIElement` traversal blocking RunLoop | Run extraction in detached background Task; query only top-level menu children ($< 10$ items); cache in atomic memory variable. |
-| **Viewport Tearing on Multi-Screen** | Laptop notch pill disappears when moving mouse to secondary screen | Global panel relocated to external display during idle | Implement Viewport Leasing: panel stays permanently on physical notch during idle; leased to external only during active expansion. |
-| **Menu Collision in Full Screen** | Double dark bars covering native clock in full-screen video | External display top edge trigger firing over descending macOS menu | Check `isFullScreenSpace`: in full-screen spaces, yield to native menu bar; require hover dwell on the visible menu bar to trigger island. |
-| **Vertical Screen Transit False Trigger** | Island pops up when moving cursor down from top monitor | Cursor crosses top edge coordinate during transit | 120ms dwell timer + downward velocity check cancels trigger on fast vertical transit. |
+| **AX IPC Hang / Latency Spike** | 应用切换时主线程卡顿 > 50ms | 同步 `AXUIElement` 遍历阻塞 RunLoop | 在独立后台 Task 中执行提取；只查询顶层菜单子项（< 10 项）；结果缓存于原子内存变量中，由进程事件定向失效。 |
+| **多屏视口撕裂** | 光标移向副屏时笔记本刘海胶囊消失 | 单例 Panel 在待机时被迁移到外接屏 | **已由 v0.0.9 双面板架构根治**：主屏 `primaryPanel` 常驻守护、副屏 `externalPanel` 独立常驻，双轨互不借调。 |
+| **全屏空间菜单碰撞** | 全屏视频下双黑条遮挡原生时钟 | 外接屏顶边缘触发覆盖正在滑出的 macOS 菜单栏 | 判定 `isFullScreenSpace`：全屏空间中让位原生菜单栏，仅在已滑出的菜单栏中央 240pt 区域产生悬停意图才触发。 |
+| **竖向屏幕穿行误触发** | 从上屏向下移动光标时灵动岛弹出 | 光标穿行时跨过下屏顶边缘坐标 | 120ms 停留定时器 + 下向速度判定，在高速竖穿时取消触发。 |
+| **非激活屏图标空白 / 错配** | 非聚焦屏展开灵动岛时图标为空白或张冠李戴 | 非聚焦屏 WindowServer 暂停菜单项光栅化，截图返回全透明 | **已由 v0.0.9 全局应用图元注册表根治**：按 `bundleIdentifier` 直出该应用的真实位图，0 兜底、0 错配。 |
+| **图元缓存语义漂移** | 单测通过但真机行为不符 | 同一语义在多个调用点各自展开，默认值与显式传参分叉 | 三层图元查找收敛为唯一入口；几何阈值等契约只保留一处定义，调用点不得覆写。 |
 
-## Out of Scope
+---
 
-- User-draggable custom positioning of the floating shelf.
-- Drag-and-drop manual reordering of icons within the floating shelf.
-- Custom theming/color overrides for the floating shelf background.
-- Support for macOS 13 (Ventura) or older.
+## 7. Out of Scope
 
-## Further Notes
+1. **私有菜单弹窗重定位（Private Menu Hooking）**：坚决不通过 Hook 私有 AppKit / WindowServer 篡改第三方应用原生下拉菜单与 Popover 的物理弹出位置，避免系统升级崩溃；
+2. **Spacer 强行插入与原生菜单篡改**：坚决不修改原生 macOS 菜单栏顺序，不向原生菜单栏插入空白占位项；
+3. **泛化为副 Dock 栏**：坚守纯粹防遮挡扩展与溢出补足原则，不支持用户常驻钉选原生已完全可见的非溢出应用；
+4. **云同步配置**：偏好设置与排序仅保存在本地持久化存储，不引入任何云端通信或网络依赖；
+5. **用户可拖拽的浮层自由定位**：浮层位置由物理几何唯一决定，不支持任意拖放；
+6. **自定义主题与颜色覆写**：浮层背景不提供主题与配色覆写；
+7. **macOS 13 (Ventura) 及更早版本支持**：仅支持 macOS 14.0 (Sonoma) 及以上。
 
-- Performance budget: Menu boundary query $< 1\text{ms}$ (event-driven); geometric overflow calculation $< 0.01\text{ms}$ (pure arithmetic); idle background CPU overhead $0.0\%$.
-- Eliminates over 100 lines of legacy virtual notch compensation code while adhering 100% to Fail-Fast and Zero-Fallback architectural invariants.
+> **说明**：「灵动岛内图标拖拽重排」曾列入 v0.0.9 之前的 Out of Scope，现已由 v0.0.9 的 `ReorderableIconRow` 正式交付（见 §4.5），**不再属于范围外**。
+
+---
+
+## 8. Further Notes
+
+- **性能预算**：菜单边界查询 < 1ms（事件驱动）；几何溢出计算 < 0.01ms（纯算术）；静息折叠态后台 CPU 开销 0.0%；稳态菜单栏扫描耗时契约 < 15ms。
+- **全量归入 v0.0.9**：本 Spec 成果全量归入 NotchRail v0.0.9。
+- **开发节奏**：遵循架构重构原则，优先实施「能耗发热根治（§4.2）」与「双屏独立面板拓扑（§4.1）」，再闭环「岛内图标排序（§4.5）」。
+- 全规格 100% 遵守 Fail-Fast 与 Zero-Fallback 架构不变量，不引入任何猜测性兜底。
