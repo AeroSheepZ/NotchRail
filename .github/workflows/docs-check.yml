@@ -1,0 +1,25 @@
+name: Docs Consistency
+
+# 文档一致性闸门 —— 依据 AGENTS.md §0「事实唯一归属（Single Home per Fact）」
+# 目的：在 push / PR 时机器化拦截「文档幻觉」：
+#   ① 已删符号残留 ② 受管数值内联 ③ 术语禁用词外泄 ④ ADR/相对引用失效 ⑤ 版本号口径不一致
+# 纯 shell + grep 实现，不需要完整 Xcode，也不需要真机。
+
+on:
+  push:
+    branches: [main]
+    paths: ['**/*.md', 'scripts/check_docs.sh', '.github/workflows/docs-check.yml']
+  pull_request:
+    paths: ['**/*.md', 'scripts/check_docs.sh', '.github/workflows/docs-check.yml']
+  workflow_dispatch:
+
+jobs:
+  check-docs:
+    name: 校验文档唯一归属一致性
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run docs consistency check
+        run: bash scripts/check_docs.sh
