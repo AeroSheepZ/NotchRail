@@ -11,6 +11,18 @@ extension Notification.Name {
 public final class MenuBarSyncCoordinator: ObservableObject {
     public static let shared = MenuBarSyncCoordinator()
     
+    /// 智能心跳三档能耗调度的时序常量（本模块时序数值唯一来源，文档一律以常量名引用）
+    public enum SmartHeartbeat {
+        /// 警戒就绪态（armed）的预热超时自愈保护时长
+        public static let PREWARM_TIMEOUT_SECONDS: TimeInterval = 3.0
+        /// 展开活动态（active）的心跳周期，保障动态网速/时钟刷新
+        public static let ACTIVE_INTERVAL_SECONDS: TimeInterval = 2.0
+        /// 收起后的宽限冷却时长，随后彻底销毁心跳定时器回归休眠
+        public static let COLLAPSE_COOLDOWN_SECONDS: TimeInterval = 1.5
+        /// 扫描调度的敏捷防抖延迟
+        public static let SCAN_DEBOUNCE_SECONDS: TimeInterval = 0.10
+    }
+    
     @Published public private(set) var latestSnapshot: MenuBarSnapshot?
     @Published public private(set) var allDiscoveredItems: [MenuBarItem] = []
     @Published public private(set) var isScanning: Bool = false
@@ -23,7 +35,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     public enum HeartbeatState: Equatable, Sendable {
         case dormant   // 完全休眠态：心跳定时器彻底置 nil，0.0% CPU 占用
         case armed     // 警戒就绪态：光标靠近顶部热区，单次轻量增量预热完成
-        case active    // 展开活动态：灵动岛处于展开或收起缓冲中，运行 2.0s 心跳保障动态网速/时钟刷新
+        case active    // 展开活动态：灵动岛处于展开或收起缓冲中，运行 SmartHeartbeat.ACTIVE_INTERVAL_SECONDS 周期心跳保障动态网速/时钟刷新
     }
     
     @Published public private(set) var heartbeatState: HeartbeatState = .dormant
@@ -94,7 +106,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
     }
     
-    /// 光标靠近顶部热区时唤醒警戒就绪态，执行单次静默增量预热（带 3.0s 超时自愈保护）
+    /// 光标靠近顶部热区时唤醒警戒就绪态，执行单次静默增量预热（带 SmartHeartbeat.PREWARM_TIMEOUT_SECONDS 超时自愈保护）
     public func armPrewarm() {
         guard heartbeatState == .dormant else { return }
         heartbeatState = .armed
@@ -103,7 +115,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
         
         prewarmTimeoutTimer?.invalidate()
-        prewarmTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+        prewarmTimeoutTimer = Timer.scheduledTimer(withTimeInterval: SmartHeartbeat.PREWARM_TIMEOUT_SECONDS, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, self.heartbeatState == .armed else { return }
                 self.heartbeatState = .dormant
@@ -120,7 +132,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         heartbeatState = .dormant
     }
     
-    /// 灵动岛展开时激活心跳定时器（2.0s 周期刷新动态数值项）
+    /// 灵动岛展开时激活心跳定时器（周期见 SmartHeartbeat.ACTIVE_INTERVAL_SECONDS，刷新动态数值项）
     public func activateHeartbeat() {
         prewarmTimeoutTimer?.invalidate()
         prewarmTimeoutTimer = nil
@@ -131,7 +143,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         heartbeatState = .active
         
         heartbeatTimer?.invalidate()
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: SmartHeartbeat.ACTIVE_INTERVAL_SECONDS, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, !self.isScanning else { return }
                 self.scheduleSync(immediate: false, showProgress: false)
@@ -139,12 +151,12 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
     }
     
-    /// 灵动岛收起后进入 1.5s 宽限冷却，随后彻底销毁心跳定时器回归 dormant 休眠
+    /// 灵动岛收起后进入 SmartHeartbeat.COLLAPSE_COOLDOWN_SECONDS 宽限冷却，随后彻底销毁心跳定时器回归 dormant 休眠
     public func deactivateHeartbeat() {
         guard heartbeatState == .active else { return }
         
         heartbeatCooldownTimer?.invalidate()
-        heartbeatCooldownTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+        heartbeatCooldownTimer = Timer.scheduledTimer(withTimeInterval: SmartHeartbeat.COLLAPSE_COOLDOWN_SECONDS, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, self.heartbeatState == .active else { return }
                 // 仅当所有屏幕均收起时才真正休眠
@@ -157,7 +169,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
     }
     
-    /// 安排一次扫描任务（支持 100ms 敏捷防抖）
+    /// 安排一次扫描任务（支持 SmartHeartbeat.SCAN_DEBOUNCE_SECONDS 敏捷防抖）
     public func scheduleSync(immediate: Bool = false, showProgress: Bool = false) {
         debounceTimer?.invalidate()
         debounceTimer = nil
@@ -165,7 +177,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         if immediate {
             performSync(showProgress: showProgress)
         } else {
-            debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: false) { [weak self] _ in
+            debounceTimer = Timer.scheduledTimer(withTimeInterval: SmartHeartbeat.SCAN_DEBOUNCE_SECONDS, repeats: false) { [weak self] _ in
                 Task { @MainActor in
                     self?.performSync(showProgress: showProgress)
                 }

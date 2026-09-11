@@ -45,6 +45,15 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     /// 系统默认应用菜单保留宽度基准（pt）
     public static let DEFAULT_APP_MENU_WIDTH: CGFloat = 180.0
     
+    /// 顶边缘唤醒热区的垂直阈值（全屏隐退态下光标碰触屏幕顶边缘即唤醒）
+    public static let TOP_EDGE_HOT_ZONE_THRESHOLD: CGFloat = 2.0
+    /// 外接平直屏中央受限碰顶热区的水平跨度（以屏幕中心对称展开）
+    public static let EXTERNAL_CENTER_HOT_ZONE_SPAN: CGFloat = 240.0
+    /// 外接平直屏中央受限碰顶热区的垂直阈值（SPEC Decision 4：屏幕顶边缘 ≤ 4pt）
+    public static let EXTERNAL_CENTER_HOT_ZONE_THRESHOLD: CGFloat = 4.0
+    /// 状态栏高度兜底值（实测优先取系统安全区 safeAreaTop，此值仅在没有安全区数据时兜底）
+    public static let DEFAULT_STATUS_BAR_HEIGHT: CGFloat = 24.0
+    
     public let displayID: CGDirectDisplayID
     public let displayName: String
     public let isBuiltIn: Bool
@@ -72,7 +81,7 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
         physicalNotchRect: CGRect,
         compactBounds: CGRect,
         extendedBounds: CGRect,
-        statusBarHeight: CGFloat = 24.0,
+        statusBarHeight: CGFloat = DEFAULT_STATUS_BAR_HEIGHT,
         isFullScreenSpace: Bool = false,
         appMenuRightEdge: CGFloat? = nil
     ) {
@@ -113,20 +122,20 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     }
 
     /// 检查指定坐标是否处于屏幕物理顶边缘触发热区
-    /// 严格遵守 Spec L19：光标推至屏幕物理顶边缘（<= 2pt）触发唤醒，杜绝全屏观影划过刘海中下部引起误唤醒
-    public func isPointInTopEdgeHotZone(_ point: CGPoint, threshold: CGFloat = 2.0) -> Bool {
+    /// 严格遵守 Spec L19：光标推至屏幕物理顶边缘（<= TOP_EDGE_HOT_ZONE_THRESHOLD）触发唤醒，杜绝全屏观影划过刘海中下部引起误唤醒
+    public func isPointInTopEdgeHotZone(_ point: CGPoint, threshold: CGFloat = TOP_EDGE_HOT_ZONE_THRESHOLD) -> Bool {
         guard point.x >= screenFrame.minX && point.x <= screenFrame.maxX else { return false }
         return point.y >= screenFrame.maxY - threshold && point.y <= screenFrame.maxY + 5.0
     }
 
-    /// 检查指定坐标是否处于外接平直屏中央 240pt 受限碰顶热区 (Ticket #44)
+    /// 检查指定坐标是否处于外接平直屏中央受限碰顶热区 (Ticket #44)
     /// 水平中心 screenFrame.midX \pm (horizontalSpan / 2.0)，垂直顶边缘 maxY - verticalThreshold ... maxY
-    /// 默认阈值 4.0pt 即生产契约（SPEC Decision 4：Screen top edge ≤ 4pt），单测必须以同一默认值断言，
+    /// 默认参数即生产契约（`EXTERNAL_CENTER_HOT_ZONE_SPAN` / `EXTERNAL_CENTER_HOT_ZONE_THRESHOLD`），单测必须以同一默认值断言，
     /// 严禁出现「单测验证默认分支、生产显式传入另一阈值」的契约脱节
     public func isPointInExternalCenterHotZone(
         _ point: CGPoint,
-        horizontalSpan: CGFloat = 240.0,
-        verticalThreshold: CGFloat = 4.0
+        horizontalSpan: CGFloat = EXTERNAL_CENTER_HOT_ZONE_SPAN,
+        verticalThreshold: CGFloat = EXTERNAL_CENTER_HOT_ZONE_THRESHOLD
     ) -> Bool {
         let halfSpan = horizontalSpan / 2.0
         let midX = screenFrame.midX
@@ -138,12 +147,12 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     /// 水平中心 screenFrame.midX \pm (horizontalSpan / 2.0)，垂直在已滑出的原生全屏菜单栏高度内
     public func isPointInExternalFullScreenCenterBar(
         _ point: CGPoint,
-        horizontalSpan: CGFloat = 240.0
+        horizontalSpan: CGFloat = EXTERNAL_CENTER_HOT_ZONE_SPAN
     ) -> Bool {
         let halfSpan = horizontalSpan / 2.0
         let midX = screenFrame.midX
         guard point.x >= midX - halfSpan && point.x <= midX + halfSpan else { return false }
-        let barHeight = max(statusBarHeight, 24.0)
+        let barHeight = max(statusBarHeight, NotchGeometry.DEFAULT_STATUS_BAR_HEIGHT)
         return point.y >= screenFrame.maxY - barHeight && point.y <= screenFrame.maxY + 5.0
     }
 

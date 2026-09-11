@@ -21,7 +21,12 @@ public final class MouseMonitor: ObservableObject {
     private var lastMouseTimestamp: TimeInterval?
     private var cancellables = Set<AnyCancellable>()
     
-    /// 16ms 鼠标移动节流时间戳（防抖高刷鼠标事件，消除无节制 Task 堆分配，Issue #51）
+    /// 鼠标移动节流间隔（防抖高刷鼠标事件，消除无节制 Task 堆分配，Issue #51）
+    private static let MOVE_THROTTLE_SECONDS: TimeInterval = 0.016
+    /// 向下高速穿透判定速度阈值（pt/s）：仅向下高速穿越时才取消外接屏停留定时器，杜绝自上向下跨屏误触 (SPEC Decision 4)
+    private static let DOWNWARD_CROSS_SPEED_THRESHOLD: CGFloat = 300.0
+    
+    /// 鼠标移动节流时间戳（防抖高刷鼠标事件，消除无节制 Task 堆分配，Issue #51）
     private nonisolated(unsafe) static var lastGlobalMoveUptime: TimeInterval = 0
     private var lastLocalMoveUptime: TimeInterval = 0
     
@@ -36,12 +41,12 @@ public final class MouseMonitor: ObservableObject {
     /// 判定光标是否位于外接平直屏的展开触发区（普通桌面中央受限热区 / 全屏空间菜单栏协同区）
     private func isPointInExternalTriggerZone(_ point: CGPoint, geometry: NotchGeometry) -> Bool {
         if geometry.isFullScreenSpace {
-            // 全屏空间协同唤醒：优先让位原生全屏菜单栏，仅在菜单栏中央 240pt 区域产生悬停意图才触发 (Ticket #45)
-            return geometry.isPointInExternalFullScreenCenterBar(point, horizontalSpan: 240.0)
+            // 全屏空间协同唤醒：优先让位原生全屏菜单栏，仅在菜单栏中央受限区产生悬停意图才触发 (Ticket #45)
+            return geometry.isPointInExternalFullScreenCenterBar(point)
         } else {
-            // 普通桌面空间：中央 240pt 受限碰顶热区 (midX \pm 120pt, maxY - 4 ... maxY) (Ticket #44)
-            // 垂直阈值不显式传入，统一由 NotchGeometry 默认契约（4.0pt）治理，杜绝测试与生产语义漂移
-            return geometry.isPointInExternalCenterHotZone(point, horizontalSpan: 240.0)
+            // 普通桌面空间：中央受限碰顶热区 (Ticket #44)
+            // 水平跨度与垂直阈值均不显式传入，统一由 NotchGeometry 默认契约治理，杜绝测试与生产语义漂移
+            return geometry.isPointInExternalCenterHotZone(point)
         }
     }
     
@@ -59,12 +64,12 @@ public final class MouseMonitor: ObservableObject {
             }
         }
         
-        // 2. 局部鼠标点击与移动监听（主线程 RunLoop 同步直调，16ms 节流，消除 Task 堆分配）
+        // 2. 局部鼠标点击与移动监听（主线程 RunLoop 同步直调，MOVE_THROTTLE_SECONDS 节流，消除 Task 堆分配）
         localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .mouseMoved]) { [weak self] event in
             guard let self = self else { return event }
             if event.type == .mouseMoved {
                 let now = ProcessInfo.processInfo.systemUptime
-                if now - self.lastLocalMoveUptime >= 0.016 {
+                if now - self.lastLocalMoveUptime >= Self.MOVE_THROTTLE_SECONDS {
                     self.lastLocalMoveUptime = now
                     self.handleMouseMove(at: NSEvent.mouseLocation)
                 }
@@ -77,7 +82,7 @@ public final class MouseMonitor: ObservableObject {
         // 3. 全局鼠标移动监听（16ms 节流限制，超频事件在闭包层直接丢弃，彻底消除微任务堆分配）
         globalMouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             let now = ProcessInfo.processInfo.systemUptime
-            if now - Self.lastGlobalMoveUptime < 0.016 {
+            if now - Self.lastGlobalMoveUptime < Self.MOVE_THROTTLE_SECONDS {
                 return
             }
             Self.lastGlobalMoveUptime = now
@@ -177,7 +182,7 @@ public final class MouseMonitor: ObservableObject {
             if geom.isFullScreenSpace {
                 // 0 溢出防护：若用户启用了「无溢出时自动隐藏」且当前屏 0 溢出，全屏碰顶绝不误唤醒空胶囊 (Spec L37)
                 let shouldSuppressAwakening = prefs.hideWhenNoOverflow && overflowCount == 0
-                let isTouchingTopEdge = !shouldSuppressAwakening && geom.isPointInTopEdgeHotZone(location, threshold: 2.0)
+                let isTouchingTopEdge = !shouldSuppressAwakening && geom.isPointInTopEdgeHotZone(location)
                 
                 if isTouchingTopEdge {
                     fullScreenGraceTimer?.invalidate()
@@ -351,7 +356,7 @@ public final class MouseMonitor: ObservableObject {
         // 4. 判定当前光标是否处于外接屏目标中央热区（复用统一判定函数）
         let isInTargetHotZone = isPointInExternalTriggerZone(location, geometry: geom)
         
-        // 显式校验高速纵向穿越速度 (SPEC Decision 4: 仅向下高速穿透 > 300pt/s 时取消定时器，杜绝自上向下跨屏误触)
+        // 显式校验高速纵向穿越速度 (SPEC Decision 4: 仅向下高速穿透超过 DOWNWARD_CROSS_SPEED_THRESHOLD 时取消定时器，杜绝自上向下跨屏误触)
         let now = Date().timeIntervalSinceReferenceDate
         var isHighVelocityPass = false
         if let lastLoc = lastMouseLocation, let lastTime = lastMouseTimestamp {
@@ -359,7 +364,7 @@ public final class MouseMonitor: ObservableObject {
             if dt > 0.001 && dt < 0.25 {
                 let isDownward = (location.y - lastLoc.y) < -5.0
                 let speedY = abs(location.y - lastLoc.y) / CGFloat(dt)
-                if isDownward && speedY > 300.0 {
+                if isDownward && speedY > Self.DOWNWARD_CROSS_SPEED_THRESHOLD {
                     isHighVelocityPass = true
                 }
             }
