@@ -32,7 +32,7 @@ NotchRail 是一个**纯非侵入式的窗口级扩展菜单栏 (Window-Level Ex
                 │ NotchRail │ (Compact 胶囊)
                 └───────────┘
                       │ 
-           Hover 停顿 120ms 或 点击胶囊
+           Hover 停顿（默认取 IslandTheme.Timing.HOVER_EXPAND_DELAY）或 点击胶囊
                       ↓
        ┌────────────────────────────────┐
        │  Raycast  GitHub  Timer  Cloud │ (单行横向平铺被刘海挤出的溢出项)
@@ -46,129 +46,42 @@ NotchRail 是一个**纯非侵入式的窗口级扩展菜单栏 (Window-Level Ex
 
 ## 2. 产品信息架构与形态
 
-### Level 1：Compact Island (常驻胶囊)
-* 尺寸：贴合刘海轮廓，全屏幕统一刘海包边造型。
-* 状态指示：常驻数字徽标，当原生屏幕无遮挡且开启「无溢出自动隐藏」或处于未唤醒全屏空间时平滑淡出。
+四级形态（Compact Island / Extended Menu Bar / Status Item / Settings）的**词义**以 `CONTEXT.md` 的词条为唯一来源（`CompactIsland`、`ExtendedMenuBar` 等）；面向用户的功能说明见 `README.md`；架构不变量见 `AGENTS.md` §3；数值以代码具名常量为准。
 
-### Level 2：Extended Menu Bar (扩展菜单栏)
-* 触发方式：支持「鼠标悬停（默认）」、「仅点击展开」、「悬停或点击」三种多通道模式。
-* **展示内容**：后台原子化预热的高清实时像素位图（第 0 帧直接展示，零加载等待）。
-* **交互反馈**：点击图标通过 `CGEvent` 派发点击；支持成功震动与点击后自动收起。
-* **离开收起**：鼠标离开灵动岛后延迟 300ms 自动收回为 Compact 态（仅点击模式下移出不收起）。
-
-### Level 3：Status Item (系统菜单栏常驻托盘)
-* 系统顶部托盘图标（`tray.full.fill`），支持一键开关灵动岛、重新扫描、偏好设置 (⌘,) 和退出应用 (⌘Q)。
-
-### Level 4：Settings (4 栏现代化设置中心)
-* **常规**：触发方式、点击自动收起、触觉震动反馈、无溢出自动隐藏、多屏策略、托盘图标、开机自启与退出。
-* **悬停与动效**：防抖与宽限时延精细滑块调节（50–300ms / 150–600ms）。
-* **应用管理**：全局活动应用汇聚池、子序列模糊搜索、高清状态位图容器、两档极简状态徽标（`岛内展示 (溢出)` / `原生可见`）与一键重扫。
-* **关于与诊断**：辅助功能与屏幕录制权限实时检测、一键重扫与状态刷新。
+> 本节此前逐条复述了这些形态的尺寸、默认延迟与交互细节，构成同一事实的第二处出处，已按 `AGENTS.md` §0 归属矩阵移除。
 
 ---
 
 ## 3. 技术栈与架构选型
 
-* **开发语言**：Swift 5.9+ / Swift 6.0
-* **模块架构**：`NotchRailKit`（核心业务库）+ `NotchRail`（可执行 App 容器）
-* **UI 框架**：SwiftUI + AppKit (`IslandPanel`: `.screenSaver` 级非激活 NSPanel 视口架构)
-* **系统底层**：
-  * `Bridging`：SkyLight 私有 API (`CGSGetProcessMenuBarWindowList`, `CGSGetScreenRectForWindow`)
-  * `CoreGraphics`：`CGWindowListCreateImageFromArray`、`CGEvent.postToPid`
-  * `MenuBarAXResolver`：Swift `actor` 并发非阻塞后台辅助功能空间映射
-* **配置持久化**：`UserDefaults`（`com.notchrail.NotchRail.preferences`）
+技术栈以 **`Package.swift`** 为唯一事实来源（依赖、平台版本、目标划分）；语言与 UI 框架基线另见 `AGENTS.md` §1；**架构选型的理由与取舍**见 `docs/adr/`。
+
+> 本节此前枚举的语言版本、私有 API 清单与持久化键，已按归属矩阵移除，避免与 `Package.swift`、`AGENTS.md` 及 ADR 形成第二处出处。
 
 ---
 
 ## 4. 项目目录结构
 
-```text
-NotchRail/
-│
-├── Package.swift                             # SPM 清单 (NotchRailKit + NotchRail)
-├── scripts/
-│   ├── build_app.sh                          # 独立 macOS App 打包与签名脚本
-│   └── test.sh                               # 全套测试与诊断脚本
-│
-├── Sources/
-│   ├── NotchRail/
-│   │   └── NotchRailApp.swift                # App 可执行入口
-│   │
-│   └── NotchRailKit/
-│       ├── App/
-│       │   ├── AppDelegate.swift             # Agent 模式与服务生命周期管理
-│       │   └── StatusItemManager.swift       # 系统菜单栏托盘管理
-│       │
-│       ├── Bridging/
-│       │   └── Bridging.swift                # SkyLight CGS 私有 API 桥接层
-│       │
-│       ├── Window/
-│       │   ├── IslandPanel.swift             # 穿透所有 Space、全透明、无阴影 NSPanel
-│       │   └── IslandWindowCoordinator.swift # 窗口 frame 锚定、先隐后迁与全屏淡入淡出调度
-│       │
-│       ├── Island/
-│       │   ├── IslandRootView.swift          # 灵动岛根容器
-│       │   ├── CompactIslandView.swift       # 常驻紧凑态胶囊
-│       │   ├── ExtendedMenuBarView.swift     # 展开态单行滑动菜单栏
-│       │   ├── IslandIconCell.swift          # 单个图标单元格与 Shake 动效
-│       │   ├── IslandBackground.swift        # 统一 Notch 造型底座与微光描边
-│       │   ├── IslandStateMachine.swift      # 多模式触发状态机控制器
-│       │   └── ShakeEffect.swift             # 错误抖动 GeometryEffect
-│       │
-│       ├── MenuBar/
-│       │   ├── MenuBarItem.swift             # 实体模型 (以 CGWindowID 为主键)
-│       │   ├── MenuBarSnapshot.swift         # 菜单栏快照聚合 (含 overflowCount)
-│       │   ├── MenuBarWindowScanner.swift    # 极速 SkyLight 窗口枚举器 (< 20ms)
-│       │   ├── MenuBarAXResolver.swift       # Actor 并发非阻塞辅助功能解析器
-│       │   ├── MenuBarItemClicker.swift      # 基于 CGEvent postToPid 的原生点击器
-│       │   ├── OverflowCalculator.swift      # 几何碰撞溢出计算器 (纯函数)
-│       │   ├── IconResolver.swift            # 100% 真实位图捕获与增量对比
-│       │   └── MenuBarSyncCoordinator.swift  # 工作区事件、多屏预热与图标同步协调器
-│       │
-│       ├── Screen/
-│       │   ├── ScreenManager.swift           # 多显示器测量与全屏空间监听
-│       │   ├── NotchGeometry.swift           # 屏幕几何、全屏状态与顶边缘热区判定
-│       │   └── MouseMonitor.swift            # 全局多屏追踪与顶边缘 2pt 碰顶唤醒
-│       │
-│       ├── Permissions/
-│       │   ├── PermissionManager.swift       # 辅助功能 + 屏幕录制权限检测
-│       │   ├── PermissionGuideView.swift     # 权限引导与系统设置跳转面板
-│       │   └── PermissionWindowCoordinator.swift
-│       │
-│       ├── Persistence/
-│       │   ├── PreferenceStore.swift         # 响应式持久化配置中心
-│       │   └── UserPreferences.swift         # 偏好数据结构 (含 TriggerMode, ExternalDisplayMode)
-│       │
-│       ├── Settings/
-│       │   ├── SettingsView.swift            # 4 栏现代化偏好设置中心视图
-│       │   ├── SettingsWindowCoordinator.swift
-│       │   └── LaunchAtLoginManager.swift    # SMAppService 开机自启动
-│       │
-│       └── Spike/
-│           └── SpikeRunner.swift             # 架构自测与底层诊断套件
-│
-└── Tests/
-    └── NotchRailTests/
-        ├── OverflowCalculatorTests.swift
-        ├── IslandStateMachineTests.swift
-        ├── PreferenceStoreTests.swift
-        ├── ScreenManagerTests.swift
-        └── MouseMonitorTests.swift
-```
+目录结构以 **`AGENTS.md` §1.1 核心模块分层**为唯一来源，并以文件系统实际内容为准。
+
+> 本节此前维护一份逐文件清单，因长期未同步而遗漏了 5 个真实存在的文件（`IslandTheme`、`IslandTopBar`、`ReorderableIconRow`、`IslandHostingView`、`FullScreenDetector`）——这正是「重复即漂移」的典型后果，已按归属矩阵整段移除。
 
 ---
 
 ## 5. 演进路线图
+
+本节是**版本清单的唯一定义处**（`AGENTS.md` §0 归属矩阵第 5 行）。版本 → Issue 编号的映射**不在文档中硬编码**，请用 `gh issue list --search "[Spec] in:title"` 现查（见 `docs/agents/issue-tracker.md`）。
 
 | 阶段 | 核心任务 | 交付物 / 状态 |
 | :--- | :--- | :--- |
 | **v0.0.1：MVP 验证** | 验证 SkyLight 窗口枚举、按 `windowID` 截取遮挡图标与 `postToPid` 点击 | ✅ **已闭环** |
 | **v0.0.2：视口架构与稳定性** | 落地 boring.notch 视口架构、三级图标管道与双向事件调度 | ✅ **已闭环** |
 | **v0.0.3：设置体系与多屏打磨** | 4 栏现代设置中心、多通道触发模式、系统托盘管理、精准多屏聚焦策略 | ✅ **已闭环** |
-| **v0.0.3-perf：极速性能重构** | 扫描耗时由 2700ms 降至 16ms、后台图标原子预热、切屏先隐后迁零闪烁 | ✅ **已闭环** |
+| **v0.0.3-perf：极速性能重构** | 扫描耗时数量级下降、后台图标原子预热、切屏先隐后迁零闪烁 | ✅ **已闭环** |
 | **v0.0.4：高保真动态耳翼与空间映射** | 零降级原生位图截取、AXExtrasMenuBar 空间映射、多屏视图隔离、动态数值增量刷新 | ✅ **已闭环** |
+| **v0.0.5：全屏空间沉浸协同与顶边缘唤醒** | 全屏空间判定与面板隐退、顶边缘碰顶唤醒与淡出缓冲、应用管理 UI 重构 | ✅ **已闭环** |
 | **v0.0.6：多屏数据隔离与管线加固** | 修复跨屏快照污染、状态栏高度自适应测绘、二级持久缓存与统一多屏渲染 | ✅ **已闭环** |
-| **v0.0.7：双轨架构解耦与焦点防冲突** | 切断切屏与扫描录制耦合、0ms 视口直出、排除自身获焦循环、AX 扫描优化与多屏选择器 | ✅ **已闭环** |
-| **v0.0.8：平直外接屏双轨纯几何碰撞与视口借调** | 剥离平直屏虚拟刘海、动态 App 菜单碰撞、中央 240pt 防抖热区、吸顶悬浮托轨与视口借调流转（**v0.0.9 已废除该两项形态与机制**） | ✅ **已闭环** |
+| **v0.0.7：双轨架构解耦与焦点防冲突** | 切断切屏与扫描录制耦合、视口直出、排除自身获焦循环、AX 扫描优化与多屏选择器 | ✅ **已闭环** |
+| **v0.0.8：平直外接屏双轨纯几何碰撞与视口借调** | 剥离平直屏虚拟刘海、动态 App 菜单碰撞、中央受限防抖热区、吸顶悬浮托轨与视口借调流转（**后两项形态与机制已于 v0.0.9 废除**） | ✅ **已闭环** |
 | **v0.0.9：低功耗零发热、双屏独立多实例与岛内管理** | Smart Heartbeat 三档休眠状态机、双轨物理自闭环 + 全局应用图元注册表（替代跨屏成对路由）、批量 IPC 抓取、双屏独立常驻面板、灵动岛内流体拖拽重排与偏好设置集中管理 | ✅ **已闭环** |
 | **v0.0.10+：空间拓展与交互增强** | 全局快捷键调用呼出、触控板手势扩展与高级诊断 | 📋 **规划中** |

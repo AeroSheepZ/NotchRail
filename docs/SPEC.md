@@ -1,9 +1,14 @@
 # Specification: NotchRail v0.0.9 - 双屏多实例架构、能耗发热根治、极速事件驱动与岛内图标排序管理
 
-> **文档状态**：v0.0.9 已闭环规格（归档自 Issue #50 及其 Ticket #51–#54）。
-> **版本历史**：见 `docs/DEVELOPMENT_PLAN.md` 的版本演进表。
-> **架构决策**：见 `docs/adr/0001` ~ `docs/adr/0007`。
-> **领域术语**：见 `CONTEXT.md`（本规格不重复定义术语）。
+> ⚠️ **历史归档 · 非现状（ARCHIVED — NOT CURRENT）**
+> 本文件是 **v0.0.9 已闭环版本**的规格快照（归档自 Issue #50 及其 Ticket #51–#54），**仅作历史追溯之用**。
+> 它**不是**当前系统行为的依据：当前需求与验收标准一律以 **GitHub Issues** 为唯一来源
+> （查询方式见 `docs/agents/issue-tracker.md`）；与本文冲突时，**以 Issues、代码与 `AGENTS.md` 为准**。
+>
+> - **版本演进**：见 `docs/DEVELOPMENT_PLAN.md`
+> - **架构决策**：见 `docs/adr/0001` ~ `docs/adr/0008`（ADR 正文为唯一来源，本文只引编号）
+> - **领域术语**：见 `CONTEXT.md`（本文不定义术语）
+> - **数值与常量**：以代码中的具名常量声明为唯一来源，本文只引常量名
 
 ---
 
@@ -29,10 +34,15 @@ v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体�
 【MacBook Built-In Notch Screen】                        【External Flat Display (Non-Notch)】
 • Physical Invariant: Camera cutout centered on top      • Physical Invariant: Zero hardware obstructions
 • Panel Ownership: 常驻 primaryPanel (permanent guard)   • Panel Ownership: 独立 externalPanel (independent)
-• Overflow Formula: minX < notchRightEdge + 24pt         • Overflow Formula: minX < (AppMenuBoundary + 12pt)
-• Idle State: Permanent black capsule + yellow wings     • Idle State: externalStealth (alpha 0.0, 100% click-through)
-• Expansion Form: Liquid drop-down fluid expansion       • Expansion Form: Central 240pt hot-zone 120ms dwell reveal
-• Expanded Visual: topEarRadius = 5.0pt 纯黑吸光底座      • Expanded Visual: 与刘海屏 100% 统一（topEarRadius = 5.0pt）
+• Overflow Formula: minX < notchRightEdge                • Overflow Formula: minX < AppMenuBoundary
+                     + OverflowCalculator.NOTCH_          + OverflowCalculator.APP_MENU_COLLISION_
+                       CORNER_SAFETY_MARGIN                 SAFETY_MARGIN
+• Idle State: Permanent black capsule + yellow wings     • Idle State: externalStealth (100% click-through)
+• Expansion Form: Liquid drop-down fluid expansion       • Expansion Form: 中央受限热区 (NotchGeometry.
+                                                           EXTERNAL_CENTER_HOT_ZONE_SPAN) 停留
+                                                           (IslandTheme.Timing.HOVER_EXPAND_DELAY) 唤醒
+• Expanded Visual: 纯黑吸光底座                           • Expanded Visual: 与刘海屏 100% 统一
+  (IslandTheme.CornerRadius.TOP_EAR)                       (同 IslandTheme.CornerRadius.TOP_EAR)
 ```
 
 ### 2.1 双面板拓扑架构（Multi-Panel Topology）
@@ -46,7 +56,7 @@ v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体�
 
 - **按需休眠心跳（Smart Heartbeat）**：灵动岛折叠且光标远离热区时彻底停用高频轮询，后台空闲 CPU 占用严格压至 0.0%；
 - **像素重绘与裁剪 Dirty-Check**：引入窗口指纹与图元缓存校验，已捕获的静态图标坚决不再重复创建 `CGContext` 与像素扫描；
-- **全局鼠标移动采样节流（16ms Throttle）**：消除鼠标监听闭包内的异步并发任务堆分配，引入时间戳节流至 16ms（60Hz 采样上限），并在屏幕中下部无关区域实行 0 开销快速熔断；
+- **全局鼠标移动采样节流**：消除鼠标监听闭包内的异步并发任务堆分配，引入时间戳节流（间隔见 `MouseMonitor.MOVE_THROTTLE_SECONDS`，即 60Hz 采样上限），并在屏幕中下部无关区域实行 0 开销快速熔断；
 - **无障碍发现事件驱动化**：以 `NSWorkspace` 的应用启动与退出系统通知为触发源动态维护菜单项进程池，彻底终结定时全系统进程全量探测。
 
 ### 2.3 岛内流体拖拽重排与排序偏好持久化
@@ -74,7 +84,7 @@ v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体�
 ### 3.2 能耗、发热与长时稳定性
 6. 作为电池供电过夜的用户，我希望灵动岛收起且空闲时 NotchRail 占用 0.0% CPU，以便机器保持凉爽、静音并延长续航。
 7. 作为关注性能的开发者，我希望窗口指纹未变的状态项不再创建临时 `CGContext` 与扫描像素缓冲，以便彻底消除无谓的内存带宽与 CPU 开销。
-8. 作为 ProMotion 120Hz 屏或高回报率鼠标用户，我希望鼠标移动事件被节流至 16ms 上限且不在堆上分配异步闭包，以便主线程 RunLoop 始终保持响应。
+8. 作为 ProMotion 120Hz 屏或高回报率鼠标用户，我希望鼠标移动事件被节流（上限见 `MouseMonitor.MOVE_THROTTLE_SECONDS`）且不在堆上分配异步闭包，以便主线程 RunLoop 始终保持响应。
 9. 作为日常用户，我希望状态项发现严格响应应用启动与退出系统通知，以便应用永不周期性扫描整个系统进程表。
 10. 作为动态状态项用户（网速表、时钟等），我希望系统仅在宽松节拍下选择性刷新动态项、静态图标完全不动，以便数字准确又不烧 CPU。
 11. 作为长时运行用户，我希望 NotchRail 在 24 小时以上运行中保持扁平内存占用，无字典无界增长或 Combine 订阅泄漏。
@@ -90,9 +100,9 @@ v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体�
 
 ### 4.0 核心领域契约不变量（Core Domain Contract Invariants）
 
-1. **彻底废除 FloatingShelf（平直托轨）概念**
-   - 旧草案中「外接屏无喇叭弧平直托轨（`topEarRadius = 0.0`）」已被彻底废除；
-   - **新不变量**：扩展屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)` 经典外展喇叭弧与纯黑吸光底座；
+1. **彻底废除平直托轨（flat-docked shelf）形态**
+   - 旧草案中「外接屏无喇叭弧平直托轨（耳翼半径置 0）」已被彻底废除；
+   - **新不变量**：扩展屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `IslandTheme.CornerRadius.TOP_EAR` 经典外展喇叭弧与纯黑吸光底座；
    - 该不变量覆盖所有展开态渲染路径，包括 `IslandBackground` 的形态推导。
 2. **废除 Viewport Leasing（视口借调流转）术语与逻辑**
    - 旧设计中「向主屏借调视口」导致主屏收起与外接屏展开的徽标闪烁冲突；
@@ -112,9 +122,9 @@ v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体�
 
 - **三档能耗节拍架构**：
   - `Dormant`（完全休眠态）：所有面板均处于折叠收起态且光标位于屏幕中下部时，心跳定时器完全挂起，后台无轮询；
-  - `Armed`（就绪警戒态）：光标移入屏幕顶边缘热区时瞬间激活单次极速增量扫描与预热，确保展开第 0 帧位图命中；离开顶区立即回退 `Dormant`（带 3.0s 超时保护）；
-  - `Active`（展开活动态）：任一面板处于展开展示态时按 2.0s 适度心跳执行轻量增量差分检测，收起后经 1.5s 冷却回归 `Dormant`。
-- **AX 空间映射缓存契约**：缓存有效期 ≥ 60s，由进程启动 / 退出事件与窗口扫描发现的候选 PID 定向失效；稳态下不再随心跳周期重复执行 AX 全表遍历。
+  - `Armed`（就绪警戒态）：光标移入屏幕顶边缘热区时瞬间激活单次极速增量扫描与预热，确保展开第 0 帧位图命中；离开顶区立即回退 `Dormant`（超时保护见 `MenuBarSyncCoordinator.SmartHeartbeat.PREWARM_TIMEOUT_SECONDS`）；
+  - `Active`（展开活动态）：任一面板处于展开展示态时按 `MenuBarSyncCoordinator.SmartHeartbeat.ACTIVE_INTERVAL_SECONDS` 执行轻量增量差分检测，收起后经 `MenuBarSyncCoordinator.SmartHeartbeat.COLLAPSE_COOLDOWN_SECONDS` 冷却回归 `Dormant`。
+- **AX 空间映射缓存契约**：缓存有效期见 `MenuBarAXResolver.MAPPING_CACHE_TTL`，由进程启动 / 退出事件与窗口扫描发现的候选 PID 定向失效；稳态下不再随心跳周期重复执行 AX 全表遍历。
 - **候选进程池维护**：候选池执行一次冷启动全量发现后，完全由 `NSWorkspace.didLaunchApplicationNotification` / `didTerminateApplicationNotification` 与窗口扫描的 `registerCandidatePID` 增量维护，**不存在定时全系统进程遍历机制**。
 - **批量窗口提取**：窗口层级与几何信息查询采用单次批量获取，消除循环内逐个单独 C 系统调用。
 - **双轨物理自律**：各显示器轨道绝对独立闭环，各管本屏几何、窗口扫描与溢出判定；代码中不存在 `pairedWindowID` 与跨屏寻窗。
@@ -126,9 +136,10 @@ v0.0.9 引入 **双屏独立视口架构、事件驱动零空转能耗根治体�
 
 ```swift
 public enum OverflowCalculator {
-    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat = 24.0
-    public static let APP_MENU_COLLISION_SAFETY_MARGIN: CGFloat = 12.0
-    public static let SCREEN_EDGE_TOLERANCE: CGFloat = 5.0
+    /// 数值以代码中的具名常量声明为准
+    public static let NOTCH_CORNER_SAFETY_MARGIN: CGFloat
+    public static let APP_MENU_COLLISION_SAFETY_MARGIN: CGFloat
+    public static let SCREEN_EDGE_TOLERANCE: CGFloat
 
     public static func resolve(
         items: [MenuBarItem],
@@ -138,15 +149,15 @@ public enum OverflowCalculator {
 }
 ```
 
-- **物理刘海轨道（`hasPhysicalNotch == true`）**：`item.nativeFrame.minX < (notchRightEdge + 24.0)`；
-- **平直非刘海轨道（`hasPhysicalNotch == false`）**：`item.nativeFrame.minX < (appMenuRightEdge + 12.0)`，`physicalNotchRect` 永久 `.zero`；
+- **物理刘海轨道（`hasPhysicalNotch == true`）**：`item.nativeFrame.minX < (notchRightEdge + NOTCH_CORNER_SAFETY_MARGIN)`；
+- **平直非刘海轨道（`hasPhysicalNotch == false`）**：`item.nativeFrame.minX < (appMenuRightEdge + APP_MENU_COLLISION_SAFETY_MARGIN)`，`physicalNotchRect` 永久 `.zero`；
 - **严禁依赖 `!item.isOnScreen`**：Space / 全屏切换时 WindowServer 会将所有菜单项标记为未上屏。
 
 ### 4.4 事件驱动应用菜单边界提取（AppMenuBoundary）
 
 - 绑定 `NSWorkspace.didActivateApplicationNotification`、`NSWorkspace.activeSpaceDidChangeNotification` 与 `NSApplication.didChangeScreenParametersNotification`；
-- 后台异步提取前台应用 `kAXMenuBarAttribute` → `kAXChildrenAttribute`，取最右子项 `position.x + size.width` 缓存至 `ScreenManager.frontmostAppMenuMaxX`；
-- 基准回退：AX 返回为空或前台为访达时，回退 `screen.frame.minX + 180.0pt`（Apple 标志与应用标题预留）。
+- 后台异步提取前台应用 `kAXMenuBarAttribute` → `kAXChildrenAttribute`，取最右子项 `position.x + size.width`；提取实现见 `MenuBarAXResolver`，结果经 `ScreenManager.updateAppMenuRightEdge(_:for:)` 写入其内部缓存，并最终以 `NotchGeometry.appMenuRightEdge` 暴露给调用方；
+- 基准回退：AX 返回为空或前台为访达时，回退 `screen.frame.minX + NotchGeometry.DEFAULT_APP_MENU_WIDTH`（Apple 标志与应用标题预留）。
 
 ### 4.5 图标流体拖拽重排与偏好模型
 
@@ -157,13 +168,13 @@ public enum OverflowCalculator {
 
 ### 4.6 边缘交互与中央热区
 
-- **空间约束**：水平跨度为屏幕中心 ± 120pt（合计 240pt）；垂直深度为屏幕顶边缘 ≤ 4pt（刘海屏另见顶边缘唤醒热区）；
-- **时间过滤（120ms 停留）**：光标进入热区启动一次性 120ms 定时器；到期前离开或高速竖穿（> 300pt/s）则取消且零状态变更；
+- **空间约束**：水平跨度为屏幕中心对称的 `NotchGeometry.EXTERNAL_CENTER_HOT_ZONE_SPAN`；垂直深度为屏幕顶边缘 ≤ `NotchGeometry.EXTERNAL_CENTER_HOT_ZONE_THRESHOLD`（刘海屏另见顶边缘唤醒热区 `NotchGeometry.TOP_EDGE_HOT_ZONE_THRESHOLD`）；
+- **时间过滤**：光标进入热区即启动一次性停留定时器（时长取 `UserPreferences.hoverExpandDelayMs`，默认 `IslandTheme.Timing.HOVER_EXPAND_DELAY`）；到期前离开、或向下高速竖穿速度超过 `MouseMonitor.DOWNWARD_CROSS_SPEED_THRESHOLD` 则取消且零状态变更；
 - **零溢出静音门**：`effectiveSnapshot.overflowCount == 0` 时热区求值立即中止。
 
 ### 4.7 视觉呈现与形态
 
-- 外接平直屏展开态与刘海屏灵动岛**视觉完全统一**：`topEarRadius = IslandTheme.CornerRadius.TOP_EAR (5.0pt)`、纯黑吸光底座、微光渐变描边；
+- 外接平直屏展开态与刘海屏灵动岛**视觉完全统一**：`IslandTheme.CornerRadius.TOP_EAR`、纯黑吸光底座、微光渐变描边；
 - 折叠常态：`alpha = 0.0`、`ignoresMouseEvents = true`，底层窗口 100% 物理直通。
 
 ---
@@ -189,14 +200,14 @@ public enum OverflowCalculator {
 4. **自定义排序接缝（Overflow Calculator Seam）**
    - 验证 `customItemOrder` 对溢出项输出顺序的确定性约束。
 5. **几何热区接缝（Geometry Seam）**
-   - 验证中央 240pt 热区的水平防误触边界与 4pt 垂直阈值契约；
+   - 验证外接屏中央热区（`NotchGeometry.EXTERNAL_CENTER_HOT_ZONE_SPAN`）的水平防误触边界与 `NotchGeometry.EXTERNAL_CENTER_HOT_ZONE_THRESHOLD` 垂直阈值契约；
    - 验证多显示器水平偏移下热区坐标正确换算。
 
 ### 5.3 既有实践（Prior Art）
 - `Tests/NotchRailTests/ScreenManagerTests.swift` 的多屏几何测试；
 - `Tests/NotchRailTests/MouseMonitorTests.swift` 的热区、防抖状态机与节流测试；
 - `Tests/NotchRailTests/OverflowCalculatorTests.swift` 的双轨碰撞与自定义排序测试；
-- `Sources/NotchRailKit/Spike/SpikeRunner.swift` 的真实硬件端到端诊断体系（Case 1~24）。
+- `Sources/NotchRailKit/Spike/SpikeRunner.swift` 的真实硬件端到端诊断体系（22 个用例，编号 1–24 含历史断档）。
 
 ---
 
@@ -206,8 +217,8 @@ public enum OverflowCalculator {
 | :--- | :--- | :--- | :--- |
 | **AX IPC Hang / Latency Spike** | 应用切换时主线程卡顿 > 50ms | 同步 `AXUIElement` 遍历阻塞 RunLoop | 在独立后台 Task 中执行提取；只查询顶层菜单子项（< 10 项）；结果缓存于原子内存变量中，由进程事件定向失效。 |
 | **多屏视口撕裂** | 光标移向副屏时笔记本刘海胶囊消失 | 单例 Panel 在待机时被迁移到外接屏 | **已由 v0.0.9 双面板架构根治**：主屏 `primaryPanel` 常驻守护、副屏 `externalPanel` 独立常驻，双轨互不借调。 |
-| **全屏空间菜单碰撞** | 全屏视频下双黑条遮挡原生时钟 | 外接屏顶边缘触发覆盖正在滑出的 macOS 菜单栏 | 判定 `isFullScreenSpace`：全屏空间中让位原生菜单栏，仅在已滑出的菜单栏中央 240pt 区域产生悬停意图才触发。 |
-| **竖向屏幕穿行误触发** | 从上屏向下移动光标时灵动岛弹出 | 光标穿行时跨过下屏顶边缘坐标 | 120ms 停留定时器 + 下向速度判定，在高速竖穿时取消触发。 |
+| **全屏空间菜单碰撞** | 全屏视频下双黑条遮挡原生时钟 | 外接屏顶边缘触发覆盖正在滑出的 macOS 菜单栏 | 判定 `isFullScreenSpace`：全屏空间中让位原生菜单栏，仅在已滑出的菜单栏中央受限区（`NotchGeometry.EXTERNAL_CENTER_HOT_ZONE_SPAN`）产生悬停意图才触发。 |
+| **竖向屏幕穿行误触发** | 从上屏向下移动光标时灵动岛弹出 | 光标穿行时跨过下屏顶边缘坐标 | 停留定时器（取 `UserPreferences.hoverExpandDelayMs`） + 下向速度判定（`MouseMonitor.DOWNWARD_CROSS_SPEED_THRESHOLD`），在高速竖穿时取消触发。 |
 | **非激活屏图标空白 / 错配** | 非聚焦屏展开灵动岛时图标为空白或张冠李戴 | 非聚焦屏 WindowServer 暂停菜单项光栅化，截图返回全透明 | **已由 v0.0.9 全局应用图元注册表根治**：按 `bundleIdentifier` 直出该应用的真实位图，0 兜底、0 错配。 |
 | **图元缓存语义漂移** | 单测通过但真机行为不符 | 同一语义在多个调用点各自展开，默认值与显式传参分叉 | 三层图元查找收敛为唯一入口；几何阈值等契约只保留一处定义，调用点不得覆写。 |
 
@@ -229,7 +240,7 @@ public enum OverflowCalculator {
 
 ## 8. Further Notes
 
-- **性能预算**：菜单边界查询 < 1ms（事件驱动）；几何溢出计算 < 0.01ms（纯算术）；静息折叠态后台 CPU 开销 0.0%；稳态菜单栏扫描耗时契约 < 15ms。
+- **性能预算**：菜单边界查询 < 1ms（事件驱动）；几何溢出计算 < 0.01ms（纯算术）；静息折叠态后台 CPU 开销 0.0%；稳态菜单栏扫描耗时契约见 `AGENTS.md` §3.4 / §4.3（该指标的唯一定义处，本文件不复述数值）。
 - **全量归入 v0.0.9**：本 Spec 成果全量归入 NotchRail v0.0.9。
 - **开发节奏**：遵循架构重构原则，优先实施「能耗发热根治（§4.2）」与「双屏独立面板拓扑（§4.1）」，再闭环「岛内图标排序（§4.5）」。
 - 全规格 100% 遵守 Fail-Fast 与 Zero-Fallback 架构不变量，不引入任何猜测性兜底。

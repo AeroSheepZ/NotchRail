@@ -11,14 +11,7 @@
 
 每个版本由 **1 个 Spec issue + N 个 Ticket issue** 组成，Ticket 通过正文 `## Parent` 段落指向其 Spec。
 
-| 版本 | Spec issue | Ticket issues |
-| :--- | :--- | :--- |
-| v0.0.9 | #50 | #51 (Ticket 1) / #52 (Ticket 2) / #53 (Ticket 3) / #54 (Ticket 4) |
-| v0.0.8 | #39 | #40 – #49 |
-| v0.0.5 | #33 | #34 – #38 |
-| v0.0.4 | #32 | #26 – #31 |
-| Phase 2 | #19 | #20 – #25 |
-| 初始版本 | #1 | #2 – #18 |
+**本文件不维护版本清单，也不硬编码任何 Issue 编号**：版本清单的唯一权威是 `docs/DEVELOPMENT_PLAN.md` §5「演进路线图」；版本与 Issue 编号的对应关系一律**由 `gh` 现查**（见下方「列出全部版本 Spec」与「定位某版本的 Spec 与 Ticket」）。手写映射会随时间漂移，历史上已因此产生过「某版本在清单中缺失」的不一致。
 
 统一标签为 `ready-for-agent`。
 
@@ -34,6 +27,12 @@ gh issue view <number> --json number,title,body,state,closedAt,comments
 
 ```bash
 gh issue list --state closed --limit 60 --json number,title,closedAt,labels
+```
+
+### 列出全部版本 Spec（版本 → Issue 映射的唯一取法）
+
+```bash
+gh issue list --state all --search "[Spec] in:title" --limit 100 --json number,title,state,closedAt
 ```
 
 ### 定位某版本的 Spec 与 Ticket
