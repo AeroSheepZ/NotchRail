@@ -1,13 +1,54 @@
 import SwiftUI
 import AppKit
 
+/// 偏好设置的分区（侧边栏条目与内容路由的唯一来源）
+private enum SettingsTab: Int, CaseIterable, Identifiable {
+    case general
+    case timing
+    case apps
+    case about
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "常规"
+        case .timing: return "悬停与动效"
+        case .apps: return "应用管理"
+        case .about: return "诊断与关于"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .timing: return "timer"
+        case .apps: return "app.badge.checkmark"
+        case .about: return "info.circle"
+        }
+    }
+}
+
 /// 偏好设置主视图
+///
+/// 版式：左侧分区侧边栏 + 右侧内容区。**刻意不使用 `TabView` + `.tabItem`** ——
+/// 该组合在 macOS 上会渲染成传统顶部标签栏，观感陈旧（历史缺陷）。
 public struct SettingsView: View {
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject var permissionManager = PermissionManager.shared
     @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
     
-    @State private var selectedTab: Int = 0
+    /// 版式尺寸的唯一来源（设置窗口与内容区共用，避免两处各写一份而失配）
+    public enum SettingsLayout {
+        /// 设置窗口内容区宽度
+        public static let WINDOW_WIDTH: CGFloat = 680
+        /// 设置窗口内容区高度
+        public static let WINDOW_HEIGHT: CGFloat = 500
+        /// 侧边栏宽度
+        public static let SIDEBAR_WIDTH: CGFloat = 172
+    }
+
+    @State private var selectedTab: SettingsTab? = .general
     @State private var searchText: String = ""
     @State private var showResetAlert: Bool = false
     @State private var isRefreshingPermissions: Bool = false
@@ -17,37 +58,14 @@ public struct SettingsView: View {
     public init() {}
     
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            // Tab 1: 常规设置
-            generalTab
-                .tabItem {
-                    Label("常规", systemImage: "gearshape")
-                }
-                .tag(0)
-            
-            // Tab 2: 悬停与动效
-            timingTab
-                .tabItem {
-                    Label("悬停与动效", systemImage: "timer")
-                }
-                .tag(1)
-            
-            // Tab 3: 应用管理
-            appsTab
-                .tabItem {
-                    Label("应用管理", systemImage: "app.badge.checkmark")
-                }
-                .tag(2)
-            
-            // Tab 4: 诊断与关于
-            aboutTab
-                .tabItem {
-                    Label("诊断与关于", systemImage: "info.circle")
-                }
-                .tag(3)
+        HStack(spacing: 0) {
+            settingsSidebar
+            Divider()
+            settingsContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
         }
-        .padding(16)
-        .frame(width: 600, height: 480)
+        .frame(width: SettingsLayout.WINDOW_WIDTH, height: SettingsLayout.WINDOW_HEIGHT)
         .alert("确定要恢复所有出厂设置吗？", isPresented: $showResetAlert) {
             Button("取消", role: .cancel) {}
             Button("恢复默认", role: .destructive) {
@@ -66,6 +84,29 @@ public struct SettingsView: View {
                 let targetDisplayID = currentScreen?.displayID ?? ScreenManager.shared.primaryGeometry.displayID
                 selectedDisplayID = targetDisplayID
             }
+        }
+    }
+
+    /// 侧边栏分区导航
+    private var settingsSidebar: some View {
+        List(selection: $selectedTab) {
+            ForEach(SettingsTab.allCases) { tab in
+                Label(tab.title, systemImage: tab.symbol)
+                    .tag(tab)
+            }
+        }
+        .listStyle(.sidebar)
+        .frame(width: SettingsLayout.SIDEBAR_WIDTH)
+    }
+
+    /// 右侧内容区（按侧边栏选择路由，四个分区内容与旧版完全一致）
+    @ViewBuilder
+    private var settingsContent: some View {
+        switch selectedTab ?? .general {
+        case .general: generalTab
+        case .timing: timingTab
+        case .apps: appsTab
+        case .about: aboutTab
         }
     }
     
