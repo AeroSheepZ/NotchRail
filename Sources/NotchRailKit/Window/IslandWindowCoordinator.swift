@@ -83,24 +83,46 @@ public final class IslandWindowCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
     
+    /// 判定指定几何是否归属主屏面板
+    ///
+    /// 主屏基准屏 = 物理刘海屏 / 内建屏；无刘海环境（合盖模式、Mac mini）即系统主屏。
+    /// 与 `ScreenManager.primaryGeometry` 共用同一条判定规则，杜绝多点各自解释「主屏」。
+    private func isPrimaryDisplay(_ geom: NotchGeometry) -> Bool {
+        geom.displayID == ScreenManager.shared.primaryGeometry.displayID
+    }
+
+    /// 副面板唯一服务的外接屏 displayID（主屏基准屏之外的首块屏幕）
+    ///
+    /// 副面板在架构上只承载一块外接屏 (Issue #53)；第三块及以上屏幕无归属面板。
+    private var externalOwnedDisplayID: CGDirectDisplayID? {
+        let primaryID = ScreenManager.shared.primaryGeometry.displayID
+        return ScreenManager.shared.allGeometries.first(where: { $0.displayID != primaryID })?.displayID
+    }
+
     /// 根据显示器 ID 获取对应的独立状态机 (Fail-Fast，未命中返回 nil，严禁跨屏借用兜底)
     public func stateMachine(for displayID: CGDirectDisplayID) -> IslandStateMachine? {
-        let allGeoms = ScreenManager.shared.allGeometries
-        guard let geom = allGeoms.first(where: { $0.displayID == displayID }) else {
+        guard let geom = ScreenManager.shared.allGeometries.first(where: { $0.displayID == displayID }) else {
             return nil
         }
-        let isPrimary = geom.hasPhysicalNotch || geom.isBuiltIn || geom.displayID == ScreenManager.shared.primaryGeometry.displayID
-        return isPrimary ? primaryStateMachine : externalStateMachine
+        if isPrimaryDisplay(geom) {
+            return primaryStateMachine
+        }
+        // 非主屏基准屏：仅当该屏确为副面板锚定屏时才归属副状态机，第三块屏 Fail-Fast 返回 nil
+        guard externalOwnedDisplayID == displayID else { return nil }
+        return externalStateMachine
     }
-    
+
     /// 根据显示器 ID 获取对应的 IslandPanel 实例 (Fail-Fast，未命中返回 nil，严禁跨屏借用兜底)
     public func panel(for displayID: CGDirectDisplayID) -> IslandPanel? {
-        let allGeoms = ScreenManager.shared.allGeometries
-        guard let geom = allGeoms.first(where: { $0.displayID == displayID }) else {
+        guard let geom = ScreenManager.shared.allGeometries.first(where: { $0.displayID == displayID }) else {
             return nil
         }
-        let isPrimary = geom.hasPhysicalNotch || geom.isBuiltIn || geom.displayID == ScreenManager.shared.primaryGeometry.displayID
-        return isPrimary ? primaryPanel : externalPanel
+        if isPrimaryDisplay(geom) {
+            return primaryPanel
+        }
+        // 严禁把副面板回退返回给非其锚定屏幕的几何（否则窗口会被锚定到错误屏幕）
+        guard externalOwnedDisplayID == displayID else { return nil }
+        return externalPanel
     }
     
     /// 创建并装载绑定指定显示器与状态机的 IslandPanel 实例 (Issue #53)
@@ -136,11 +158,7 @@ public final class IslandWindowCoordinator: ObservableObject {
     
     /// 动态设置指定物理窗口的鼠标事件穿透性 (Issue #53)
     public func setIgnoresMouseEvents(_ ignores: Bool, for displayID: CGDirectDisplayID? = nil) {
-        if let targetDisplayID = displayID, let targetPanel = panel(for: targetDisplayID) {
-            if targetPanel.ignoresMouseEvents != ignores {
-                targetPanel.ignoresMouseEvents = ignores
-            }
-        } else {
+        guard let targetDisplayID = displayID else {
             // 未指定则同步主副屏
             if let primary = primaryPanel, primary.ignoresMouseEvents != ignores {
                 primary.ignoresMouseEvents = ignores
@@ -148,6 +166,11 @@ public final class IslandWindowCoordinator: ObservableObject {
             if let external = externalPanel, external.ignoresMouseEvents != ignores {
                 external.ignoresMouseEvents = ignores
             }
+            return
+        }
+        // 指定屏幕时 Fail-Fast：无归属面板即不做任何操作，严禁误改其他屏幕的穿透状态
+        if let targetPanel = panel(for: targetDisplayID), targetPanel.ignoresMouseEvents != ignores {
+            targetPanel.ignoresMouseEvents = ignores
         }
     }
     
@@ -169,7 +192,10 @@ public final class IslandWindowCoordinator: ObservableObject {
         )
         
         // 2. 外接平直显示器副面板生命周期管理 (External Panel)
-        let externalGeom = allGeoms.first(where: { $0.displayID != primaryGeom?.displayID })
+        //    与 panel(for:) / stateMachine(for:) 共用 externalOwnedDisplayID 单一事实来源
+        let externalGeom = externalOwnedDisplayID.flatMap { extID in
+            allGeoms.first(where: { $0.displayID == extID })
+        }
         let allowsExternal = (prefs.externalDisplayMode != .mainScreenOnly && prefs.externalDisplayMode != .disabled)
         let effectiveExternalGeom = allowsExternal ? externalGeom : nil
         if !allowsExternal, let extGeom = externalGeom {

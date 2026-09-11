@@ -15,17 +15,22 @@ public actor MenuBarAXResolver {
         public let size: CGSize
     }
 
+    /// 空间映射缓存有效期（Issue #52：延长至 60 秒以上，由进程生命周期事件定向失效）
+    private static let MAPPING_CACHE_TTL: TimeInterval = 60.0
+
     private var cachedEntries: [Entry] = []
     private var lastScanDate: Date?
     /// 维护已确认拥有菜单栏 Extra 项的增量进程 PID 缓存池 (AGENTS.md 3.4)
     private var knownMenuBarPIDs: Set<pid_t> = []
-    private var lastFullDiscoveryDate: Date?
 
     private init() {}
 
-    /// 获取最新的所有运行应用的菜单栏 Extra 空间映射表（带 2.0 秒自愈缓存）
+    /// 获取最新的所有运行应用的菜单栏 Extra 空间映射表
+    ///
+    /// 命中契约：缓存在 `MAPPING_CACHE_TTL` 内且非空即直出；进程启动 / 退出 / 窗口扫描发现新
+    /// ownerPID 时由 `invalidateCache()` 定向失效，因此稳态下不再随心跳周期重复执行 AX 全表遍历 (Issue #52)。
     public func latestEntries() -> [Entry] {
-        if let last = lastScanDate, Date().timeIntervalSince(last) < 2.0, !cachedEntries.isEmpty {
+        if let last = lastScanDate, Date().timeIntervalSince(last) < Self.MAPPING_CACHE_TTL, !cachedEntries.isEmpty {
             return cachedEntries
         }
         let entries = performAXScan()
@@ -174,16 +179,12 @@ public actor MenuBarAXResolver {
         guard AXIsProcessTrusted() else { return [] }
 
         let ownPID = getpid()
-        let now = Date()
 
-        // 1. 若已知池为空，或距上次全量发现超过 60 秒，执行一次带子进程过滤的快速发现
-        let shouldRunFullDiscovery = knownMenuBarPIDs.isEmpty ||
-            lastFullDiscoveryDate == nil ||
-            now.timeIntervalSince(lastFullDiscoveryDate!) > 60.0
-
-        if shouldRunFullDiscovery {
+        // 1. 候选池仅在本进程首次扫描（冷启动）时执行一次带子进程过滤的全量发现；
+        //    此后完全由 NSWorkspace 启动 / 退出事件与窗口扫描的 registerCandidatePID 增量维护，
+        //    彻底移除 60s 定时全系统进程遍历机制 (Issue #52)
+        if knownMenuBarPIDs.isEmpty {
             discoverMenuBarPIDs()
-            lastFullDiscoveryDate = now
         }
 
         // 2. 针对已知池中的 PID 执行增量极速扫描 (< 5ms)

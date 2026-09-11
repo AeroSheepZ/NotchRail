@@ -146,18 +146,13 @@ public final class IconResolver: ObservableObject {
         var initialChanged = false
         for item in items {
             let key = item.iconCacheKey
-            let cached = cache[key]
-                ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
-                ?? persistentCache[item.persistentKey]
+            let cached = resolveCachedIcon(for: item)
             if let cached = cached {
                 if cache[key] == nil {
                     cache[key] = cached
                     touchAccessOrder(for: key)
                 }
-                let isAlreadyLoaded: Bool = {
-                    if case .loaded = updatedStates[key] { return true }
-                    return false
-                }()
+                let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                 if !isAlreadyLoaded {
                     updatedStates[key] = .loaded(cached.nsImage)
                     initialChanged = true
@@ -177,12 +172,8 @@ public final class IconResolver: ObservableObject {
             // 显式全量重扫或灵动岛展开活跃心跳态：全量捕获以比对动态数值（网速、时钟等）
             itemsToCapture = items
         } else {
-            // 静默休眠态：仅对内存与应用资产库中完全没有有效位图的新发现项发起系统截图
-            itemsToCapture = items.filter { item in
-                let key = item.iconCacheKey
-                let hasVault = item.bundleIdentifier.flatMap { appAssetVault[$0] } != nil
-                return cache[key] == nil && !hasVault && persistentCache[item.persistentKey] == nil
-            }
+            // 静默休眠态：仅对三层图元来源（本屏内存 / 全局应用资产库 / 持久缓存）均无有效位图的新发现项发起系统截图
+            itemsToCapture = items.filter { resolveCachedIcon(for: $0) == nil }
         }
         guard !itemsToCapture.isEmpty else { return }
 
@@ -224,10 +215,7 @@ public final class IconResolver: ObservableObject {
             let key = item.iconCacheKey
             if let icon = result.images[key] {
                 // 视觉相等且已发布 loaded 态 → 不更新（不触发重渲染）
-                let isAlreadyLoaded: Bool = {
-                    if case .loaded = updatedStates[key] { return true }
-                    return false
-                }()
+                let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                 let existingIcon = cache[key]
                 if !CapturedIcon.isVisuallyEqual(existingIcon, icon) || !isAlreadyLoaded {
                     cache[key] = icon
@@ -245,18 +233,13 @@ public final class IconResolver: ObservableObject {
             } else if result.transparentKeys.contains(key) {
                 // 非激活屏全透明省电特性保护：
                 // 1. 若本项此前已捕获有效真实位图，或应用资产注册表中已登记该应用的真实位图，直接直出
-                let existing = cache[key]
-                    ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
-                    ?? persistentCache[item.persistentKey]
+                let existing = resolveCachedIcon(for: item)
                 if let existing = existing {
                     if cache[key] == nil {
                         cache[key] = existing
                         touchAccessOrder(for: key)
                     }
-                    let isAlreadyLoaded: Bool = {
-                        if case .loaded = updatedStates[key] { return true }
-                        return false
-                    }()
+                    let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                     if !isAlreadyLoaded {
                         updatedStates[key] = .loaded(existing.nsImage)
                         statesChanged = true
@@ -268,18 +251,13 @@ public final class IconResolver: ObservableObject {
                 // 2. 若冷启动尚未截到位图，保持原态（如 .pending），绝不记录失败，杜绝误入黑名单
             } else if result.failedKeys.contains(key) {
                 // 真正系统调用失败或窗口已销毁
-                let fallback = cache[key]
-                    ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
-                    ?? persistentCache[item.persistentKey]
+                let fallback = resolveCachedIcon(for: item)
                 if let fallback = fallback {
                     if cache[key] == nil {
                         cache[key] = fallback
                         touchAccessOrder(for: key)
                     }
-                    let isAlreadyLoaded: Bool = {
-                        if case .loaded = updatedStates[key] { return true }
-                        return false
-                    }()
+                    let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                     if !isAlreadyLoaded {
                         updatedStates[key] = .loaded(fallback.nsImage)
                         statesChanged = true
@@ -294,18 +272,13 @@ public final class IconResolver: ObservableObject {
                 }
             } else {
                 // 被黑名单冷却跳过或无有效窗口 bounds
-                let fallback = cache[key]
-                    ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
-                    ?? persistentCache[item.persistentKey]
+                let fallback = resolveCachedIcon(for: item)
                 if let fallback = fallback {
                     if cache[key] == nil {
                         cache[key] = fallback
                         touchAccessOrder(for: key)
                     }
-                    let isAlreadyLoaded: Bool = {
-                        if case .loaded = updatedStates[key] { return true }
-                        return false
-                    }()
+                    let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                     if !isAlreadyLoaded {
                         updatedStates[key] = .loaded(fallback.nsImage)
                         statesChanged = true
@@ -324,6 +297,26 @@ public final class IconResolver: ObservableObject {
             iconStates = updatedStates
             evictIfNeeded()
         }
+    }
+
+    // MARK: - 图元缓存查找
+
+    /// 三层图元查找唯一入口：本屏内存缓存 → 全局应用图元注册表 → 跨窗口持久缓存
+    ///
+    /// 三层均为「已成功捕获真实位图」的合法来源（AGENTS.md 3.1 Application Asset Vault），
+    /// 不存在猜测性兜底；统一由此处治理，杜绝三处调用各自展开 `??` 级联导致的语义漂移。
+    private func resolveCachedIcon(for item: MenuBarItem) -> CapturedIcon? {
+        cache[item.iconCacheKey]
+            ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
+            ?? persistentCache[item.persistentKey]
+    }
+
+    /// 判断给定 iconCacheKey 在状态表中是否已处于 loaded 态
+    ///
+    /// 已 loaded 的项不再重复发布，避免触发 SwiftUI 无谓重渲染。
+    private func isLoaded(_ key: String, in states: [String: IconState]) -> Bool {
+        if case .loaded = states[key] { return true }
+        return false
     }
 
     // MARK: - 失败黑名单

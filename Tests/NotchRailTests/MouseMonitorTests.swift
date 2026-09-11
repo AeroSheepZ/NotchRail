@@ -116,19 +116,19 @@ final class MouseMonitorTests: XCTestCase {
         let farRightClock = CGPoint(x: 2540.0, y: topY - 1.0)
         XCTAssertFalse(geom.isPointInExternalCenterHotZone(farRightClock))
         
-        // 4. 垂直阈值判定：覆盖状态栏高度（topY - 10.0）命中，超出状态栏高度（topY - 25.0 < 1416.0）及屏幕中央严格不命中
-        let withinStatusBar = CGPoint(x: midX, y: topY - 10.0)
-        XCTAssertTrue(geom.isPointInExternalCenterHotZone(withinStatusBar))
+        // 4. 垂直阈值防误触：默认契约 4pt，距离顶边缘 <= 4pt 命中（如 topY - 3.5），> 4pt（如 topY - 4.5）严格不命中
+        let within4pt = CGPoint(x: midX, y: topY - 3.5)
+        XCTAssertTrue(geom.isPointInExternalCenterHotZone(within4pt))
         
-        let belowStatusBar = CGPoint(x: midX, y: topY - 25.0)
-        XCTAssertFalse(geom.isPointInExternalCenterHotZone(belowStatusBar))
+        let below4pt = CGPoint(x: midX, y: topY - 4.5)
+        XCTAssertFalse(geom.isPointInExternalCenterHotZone(below4pt))
+        
+        // 远离顶边缘（顶边缘以下 25pt）与屏幕中央均严格不命中
+        let farBelowTopEdge = CGPoint(x: midX, y: topY - 25.0)
+        XCTAssertFalse(geom.isPointInExternalCenterHotZone(farBelowTopEdge))
         
         let middleScreen = CGPoint(x: midX, y: 720.0)
         XCTAssertFalse(geom.isPointInExternalCenterHotZone(middleScreen))
-        
-        // 显式传入自定义 4pt 阈值时，距离顶边缘 > 4pt 严格不命中
-        let below4pt = CGPoint(x: midX, y: topY - 4.5)
-        XCTAssertFalse(geom.isPointInExternalCenterHotZone(below4pt, verticalThreshold: 4.0))
     }
     
     func testMultiDisplayOffsetExternalCenterHotZone() {

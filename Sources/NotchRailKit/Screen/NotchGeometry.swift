@@ -120,17 +120,18 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
     }
 
     /// 检查指定坐标是否处于外接平直屏中央 240pt 受限碰顶热区 (Ticket #44)
-    /// 水平中心 screenFrame.midX \pm (horizontalSpan / 2.0)，垂直顶边缘覆盖整个状态栏高度 (maxY - barHeight ... maxY)
+    /// 水平中心 screenFrame.midX \pm (horizontalSpan / 2.0)，垂直顶边缘 maxY - verticalThreshold ... maxY
+    /// 默认阈值 4.0pt 即生产契约（SPEC Decision 4：Screen top edge ≤ 4pt），单测必须以同一默认值断言，
+    /// 严禁出现「单测验证默认分支、生产显式传入另一阈值」的契约脱节
     public func isPointInExternalCenterHotZone(
         _ point: CGPoint,
         horizontalSpan: CGFloat = 240.0,
-        verticalThreshold: CGFloat? = nil
+        verticalThreshold: CGFloat = 4.0
     ) -> Bool {
         let halfSpan = horizontalSpan / 2.0
         let midX = screenFrame.midX
         guard point.x >= midX - halfSpan && point.x <= midX + halfSpan else { return false }
-        let threshold = verticalThreshold ?? max(statusBarHeight, 24.0)
-        return point.y >= screenFrame.maxY - threshold && point.y <= screenFrame.maxY + 5.0
+        return point.y >= screenFrame.maxY - verticalThreshold && point.y <= screenFrame.maxY + 5.0
     }
 
     /// 检查指定坐标是否处于外接平直屏全屏空间下的菜单栏中央协同区域 (Ticket #45)

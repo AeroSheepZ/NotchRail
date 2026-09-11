@@ -33,14 +33,15 @@ public final class MouseMonitor: ObservableObject {
         externalDwellTimer = nil
     }
     
-    /// 判定光标是否位于外接平直屏的目标中央热区（消除重复代码）
-    private func isPointInExternalTopZone(_ point: CGPoint, geometry: NotchGeometry) -> Bool {
+    /// 判定光标是否位于外接平直屏的展开触发区（普通桌面中央受限热区 / 全屏空间菜单栏协同区）
+    private func isPointInExternalTriggerZone(_ point: CGPoint, geometry: NotchGeometry) -> Bool {
         if geometry.isFullScreenSpace {
             // 全屏空间协同唤醒：优先让位原生全屏菜单栏，仅在菜单栏中央 240pt 区域产生悬停意图才触发 (Ticket #45)
             return geometry.isPointInExternalFullScreenCenterBar(point, horizontalSpan: 240.0)
         } else {
             // 普通桌面空间：中央 240pt 受限碰顶热区 (midX \pm 120pt, maxY - 4 ... maxY) (Ticket #44)
-            return geometry.isPointInExternalCenterHotZone(point, horizontalSpan: 240.0, verticalThreshold: 4.0)
+            // 垂直阈值不显式传入，统一由 NotchGeometry 默认契约（4.0pt）治理，杜绝测试与生产语义漂移
+            return geometry.isPointInExternalCenterHotZone(point, horizontalSpan: 240.0)
         }
     }
     
@@ -348,7 +349,7 @@ public final class MouseMonitor: ObservableObject {
         IslandWindowCoordinator.shared.setIgnoresMouseEvents(true, for: geom.displayID)
         
         // 4. 判定当前光标是否处于外接屏目标中央热区（复用统一判定函数）
-        let isInTargetHotZone = isPointInExternalTopZone(location, geometry: geom)
+        let isInTargetHotZone = isPointInExternalTriggerZone(location, geometry: geom)
         
         // 显式校验高速纵向穿越速度 (SPEC Decision 4: 仅向下高速穿透 > 300pt/s 时取消定时器，杜绝自上向下跨屏误触)
         let now = Date().timeIntervalSinceReferenceDate
@@ -392,7 +393,7 @@ public final class MouseMonitor: ObservableObject {
                         if prefs.hideWhenNoOverflow && currentOverflow == 0 { return }
                         
                         let mousePos = NSEvent.mouseLocation
-                        let stillInZone = self.isPointInExternalTopZone(mousePos, geometry: currentGeom)
+                        let stillInZone = self.isPointInExternalTriggerZone(mousePos, geometry: currentGeom)
                         guard stillInZone else { return }
                         
                         // 停留意图确立：驱动外接屏独立状态机展开并刷新视口
@@ -427,7 +428,7 @@ public final class MouseMonitor: ObservableObject {
                 if !extSM.currentState.isExpanded {
                     let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
                     let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
-                    if !shouldSuppress && isPointInExternalTopZone(location, geometry: geom) {
+                    if !shouldSuppress && isPointInExternalTriggerZone(location, geometry: geom) {
                         if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
                             ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
                         }
