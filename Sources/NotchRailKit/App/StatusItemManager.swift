@@ -66,10 +66,17 @@ public final class StatusItemManager: NSObject, NSMenuDelegate, ObservableObject
     
     // MARK: - NSMenuDelegate
     
+    /// 当前焦点屏对应的灵动岛状态机（无归属屏幕时返回 nil）
+    ///
+    /// 托盘菜单一律作用于**用户当前所在的屏幕**，绝不隐式绑定某一块屏（旧实现固定操作主屏状态机）。
+    private var focusedStateMachine: IslandStateMachine? {
+        IslandWindowCoordinator.shared.stateMachine(for: ScreenManager.shared.currentGeometry.displayID)
+    }
+    
     public func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         
-        let isExpanded = IslandStateMachine.shared.currentState.isExpanded
+        let isExpanded = focusedStateMachine?.currentState.isExpanded ?? false
         let toggleTitle = isExpanded ? "收起灵动岛" : "展开灵动岛"
         
         // 1. 灵动岛开关
@@ -100,7 +107,7 @@ public final class StatusItemManager: NSObject, NSMenuDelegate, ObservableObject
     // MARK: - Menu Actions
     
     @objc private func handleToggleIsland() {
-        IslandStateMachine.shared.toggleExpandCollapse()
+        focusedStateMachine?.toggleExpandCollapse()
     }
     
     @objc private func handleRescan() {

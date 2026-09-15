@@ -55,7 +55,7 @@ NotchRail/
     ├── Screen/                      # 屏幕拓扑、几何测绘、全屏 Space 检测与光标监听
     ├── MenuBar/                     # 窗口扫描 (SkyLight CGS)、AX 身份映射、溢出计算、图标截取管线
     ├── Island/                      # 灵动岛 UI 视图体系、自适应动态耳翼、流体拖拽重排、悬停/点击交互状态机
-    ├── Window/                      # 双面板 NSPanel 悬浮面板、吸顶视口、Frame 同步与事件物理直通管理
+    ├── Window/                      # 按 displayID 注册的每屏 NSPanel 视口、Frame 同步与事件物理直通管理
     ├── Persistence/                 # UserPreferences 领域模型 (含 customItemOrder) 与 PreferenceStore 持久化
     ├── Settings/                    # 现代化偏好设置中心 (常规、悬停动效、应用管理、诊断)
     ├── Permissions/                 # 辅助功能 (AX) 与屏幕录制 (CGScreenCapture) 权限流
@@ -96,8 +96,11 @@ NotchRail/
 任何改动不得破坏以下四项核心工程基石：
 
 ### 2.1 单一真实来源与多屏物理隔离 (Single Source of Truth)
-- 每一台显示器（`displayID`）拥有完全独立的数据空间、几何配置与菜单栏快照；
-- **坚决禁止任何跨屏快照继承或全局兜底借用**（例如严禁使用 `snapshotsByDisplay[displayID] ?? latestSnapshot`），杜绝跨屏坐标污染与虚假溢出；
+- 每一台显示器（`displayID`）拥有完全独立的数据空间、几何配置、菜单栏快照、灵动岛视口与交互状态机；
+- **屏幕数量不设上限，一律按 `displayID` 注册与取用**：视口与状态机分别注册于 `IslandWindowCoordinator.panelsByDisplay` / `machinesByDisplay`，严禁出现「主槽位 / 副槽位」这类写死屏数的结构，也严禁任何 `primary*` / `external*` 式的成对字段（否则第三块屏起将静默失效）；
+- **坚决禁止任何跨屏快照继承或全局兜底借用**（例如严禁使用 `snapshotsByDisplay[displayID] ?? 任一默认快照`），杜绝跨屏坐标污染与虚假溢出；
+- **严禁任何共享全局状态机**：每屏状态机物理隔离，`stateMachine(for:)` / `panel(for:)` 未命中一律 Fail-Fast 返回 nil，绝不回退到别的屏幕或某个单例；
+- **渲染对账不得改写全局焦点屏**：`applyDisplayAndVisibilityRules` 必须是幂等的按屏对账，焦点跟随只能由 `MouseMonitor` 在真实用户交互处驱动，否则会与 `ScreenManager.$currentGeometry` 的订阅构成重入环；
 - 遇到数据异常应遵循 Fail-Fast（快速失败）原则并在源头阻断，严禁用“猜测性兜底”掩盖底层系统事实。
 
 ### 2.2 零降级原生位图截取 (Zero-Fallback Real Capture)
@@ -125,18 +128,19 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
 - **内建刘海屏 (`hasPhysicalNotch == true` 或内建主屏)**：
   - 状态栏高度以系统安全区（`safeAreaTop`）实测为准；无安全区数据时兜底 `NotchGeometry.DEFAULT_STATUS_BAR_HEIGHT`；
   - 顶部保留硬件级喇叭口耳翼（半径常量见 `IslandTheme.CornerRadius.TOP_EAR`）；
-  - 主屏独立面板（`primaryPanel`）常态常驻守护于此，运行主屏独立状态机，呈现紧凑态胶囊（Compact Island）。
+  - 主屏视口（`IslandWindowCoordinator.panelsByDisplay` 中主屏基准屏那一项）常态常驻守护于此，运行本屏独立状态机，呈现紧凑态胶囊（Compact Island）。
 - **外接平直显示器 (`hasPhysicalNotch == false && !isBuiltIn`)**：
   - **彻底废除 160pt 虚拟假刘海**：平直外接屏 `physicalNotchRect == .zero`，消除假刘海与常驻黑胶囊的视觉污染；
   - **动态菜单碰撞判定**：溢出判定完全基于前台 App 菜单右边缘碰撞（阈值常量见 `OverflowCalculator.APP_MENU_COLLISION_SAFETY_MARGIN`），仅当三方项被挤压时才判定为溢出；
   - **常态 100% 隐形**：平直外接屏折叠常态下完全隐退（`alpha = 0`，`ignoresMouseEvents = true`），底层窗口 100% 物理直通；
   - **展开统一黑仿真灵动岛设计**：展开态保持统一纯黑吸光底座、微光渐变描边与顶部标志性外展平滑喇叭弧（耳翼半径同刘海屏，见 `IslandTheme.CornerRadius.TOP_EAR`）；
-  - **双屏独立多实例架构与隔离状态机 (Ticket #53)**：主屏拥有常驻 `primaryPanel`，外接屏按需装载独立 `externalPanel`，分别搭载物理隔离的 `IslandStateMachine`，心跳由 `MenuBarSyncCoordinator` 集中聚合；触碰外接屏顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏抢夺与徽标闪烁；
-  - **全屏幕拓扑自适应**：智能兼容 MacBook 内置刘海、单平直屏（Mac mini / 盒盖模式）、双外接平直屏等多形态，主屏幕守护主面板，第二屏守护副面板；
-- **双轨物理自律与全局应用图元注册表 (Application Asset Vault)**：
+  - **多屏独立多实例架构与隔离状态机**：每块屏幕各持一台物理隔离的 `IslandStateMachine` 与一个独立视口，全部按 `displayID` 注册于 `IslandWindowCoordinator`（见 §2.1）；心跳由 `MenuBarSyncCoordinator` 按展开屏集合集中聚合；触碰任意外接屏顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏抢夺与徽标闪烁；
+  - **屏幕数量无上限**：智能兼容 MacBook 内置刘海、单平直屏（Mac mini / 盒盖模式）、双外接平直屏乃至更多屏幕的任意组合；主屏视口常驻，其余屏视口按需装载（展开中或存在溢出项时保留，空闲宽限后卸载），**屏幕增减一律由幂等对账处理，不得写死屏数**；
+- **多轨物理自律与全局应用图元注册表 (Application Asset Vault)**：
   - 各显示器轨道绝对独立闭环，各管本屏物理几何、窗口扫描与溢出判定，**坚决杜绝跨屏窗口配对或借调**；
   - WindowServer 在非聚焦屏幕上为了节能会暂停菜单项光栅化（窗口截图返回全透明）；
-  - `IconResolver` 维护以进程 `bundleIdentifier` 为索引的全局应用图元注册表（`appAssetVault`）。任一激活屏幕成功截取到真实位图时即登记入库；非激活屏幕展开灵动岛时直接凭本轨项确凿的 Bundle ID 直出真实超清位图，0 延迟、0 兜底、0 错配。
+  - `IconResolver` 维护以进程 `bundleIdentifier` 为索引的全局应用图元注册表（`appAssetVault`）。任一激活屏幕成功截取到真实位图时即登记入库；非激活屏幕展开灵动岛时直接凭本轨项确凿的 Bundle ID 直出真实超清位图，0 延迟、0 兜底、0 错配；
+  - **图元键必须逐项唯一**：不同状态项绝不可共用同一个 `bundleIdentifier`（例如把时钟 / 电池 / Wi-Fi 等系统项统一写成控制中心宿主 ID），否则注册表槽位互相覆盖，非激活屏回退取图必然张冠李戴；
 
 ### 3.2 全屏空间 (Full-Screen Spaces) 沉浸协同
 - **全屏判定标准**：
@@ -156,6 +160,13 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
 ### 3.4 辅助功能 (AX) 与系统代理穿透准则
 - **外接屏代理反查**：macOS 在扩展屏上将三方状态项统一归入系统宿主进程代管，绝不可依据窗口的 `ownerPID` 过滤候选进程；必须由 `MenuBarAXResolver` 维护增量缓存池（`knownMenuBarPIDs`），通过空间物理位置（`AXPosition`）反查真实应用与 Bundle ID；
 - **子进程防挂起过滤**：扫描候选应用时必须过滤排除 `WebKit.WebContent` / `renderer` 等子进程，防止 Accessibility IPC 出现秒级以上超时；日常刷新保持增量扫描耗时 $< 10\text{ms}$。
+- **点击派发目标恒为状态项窗口的 owner**：合成事件的目标进程必须与事件携带的「鼠标下窗口」字段同属一个进程。状态项窗口在窗口服务器层恒归控制中心宿主所有，故目标恒取 `MenuBarItem.clickTargetPID`（即窗口 owner），由宿主完成菜单栏项激活并转交真实应用。**绝不可改投 AX 反查出的真实归属应用**（`sourcePID` 只服务于图元归属与 AX 元素定位）：该进程内不存在此 `windowID` 对应的窗口，事件会被静默丢弃，表现即「岛内第三方图标点了没反应」。此规则曾被反向着写，理由见 `docs/adr/0010`。
+- **左键单击与辅助点击走不同通道**：左键单击走宿主激活通道（私有字段 + `postToPid`），对未参与合成的溢出项同样有效；辅助点击走**会话事件流 + 目标窗口字段**通道（`CGEvent.post(tap: .cgSessionEventTap)`，事件携带 `MenuBarClickEventFactory` 组装的目标窗口字段），投递前须让自有视口临时穿透，并等待穿透标志实际生效。
+  - **辅助点击不以 `isOnScreen` 分流**：该项是否被窗口服务器合成，与本通道成败无关；可达性的唯一前置条件是「目标项持有有效 `windowID`」。窗口服务器把事件携带的目标窗口字段当作**路由覆盖**，因此被刘海挤占、未参与合成的溢出项同样能收到真实右键。此规则曾按相反方向写入并被 [ADR 0011](docs/adr/0011-secondary-click-session-event-routing.md) 取代，理由见该 ADR。
+  - **判据是「响应」而非「不可达」**：派发后开启响应观察窗（常量见 `MenuBarItemClicker.SECONDARY_RESPONSE_WINDOW_NANOSECONDS`），窗内出现新的菜单层窗口即视为已响应；否则返回 `.noResponse`，由调用方给出可见反馈（岛内图标 Shake + 触觉），**不得静默**。`noResponse` 的语义是「事件已送达但该项没有辅助点击处理」，**不是**「不可达」。
+  - **严禁改发左键冒充右键**：左键在部分应用是「立即动作」而非菜单（静音 / 暂停 / 开关），冒充与用户意图相悖（理由见 [ADR 0010](docs/adr/0010-status-item-owner-event-dispatch.md)）。
+- **事件字段唯一构造器**：点击事件的字段组装（私有字段、按键号、`clickState`）一律经 `MenuBarClickEventFactory` 取用，生产路径与诊断路径不得各自拼装 —— 两侧字段漂移会让诊断路径静默掩盖生产缺陷。
+- **不提供左键双击**：`MenuBarClickKind` 只有 `.single` 与 `.secondary` 两种。双击是 `.leftMouseDown` 的 `clickCount == 2`，与辅助点击（触控板双指 = 鼠标右键）正交；一旦按 `clickCount >= 2` 分流，双击间隔内对同一图标的第二次单击会被误吞，表现为「单击时灵时不灵」。
 
 ---
 

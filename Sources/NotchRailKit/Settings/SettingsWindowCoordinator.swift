@@ -45,8 +45,11 @@ public final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         )
 
         panel.title = "NotchRail 偏好设置"
-        panel.center()
+        // ⚠️ 顺序不可颠倒：设置 `contentViewController` 会让 AppKit 按视图控制器的适配尺寸**重设窗口大小**。
+        // 若先 `center()` 再设控制器，窗口会在居中之后被撑高，顶部越出屏幕后被系统约束回顶边缘，
+        // 表现为「窗口贴在屏幕上边缘水平居中」。必须先设控制器，再对**最终尺寸**居中。
         panel.contentViewController = hostingController
+        panel.center()
         panel.isReleasedWhenClosed = false
         panel.delegate = self
 

@@ -7,6 +7,11 @@ public actor MenuBarAXResolver {
     public static let shared = MenuBarAXResolver()
 
     public struct Entry: Sendable {
+        /// 该 Extra 菜单栏项的真实归属进程 PID（持有 AXExtrasMenuBar 的应用本身）
+        ///
+        /// 状态项窗口的 owner 恒为控制中心宿主，**绝不能**用窗口 ownerPID 作为事件投递目标；
+        /// 此处的 pid 是事件派发的唯一正确目标（见 `MenuBarItem.sourcePID`）。
+        public let processIdentifier: pid_t
         public let appName: String
         public let bundleIdentifier: String?
         public let title: String?
@@ -88,11 +93,29 @@ public actor MenuBarAXResolver {
         }
     }
 
-    /// 空间坐标匹配（X 坐标相差 <= tolerance 且 Y 坐标在状态栏范围）
+    /// 空间坐标匹配（水平**中心**相差 <= tolerance）
+    ///
+    /// ## ✅ 前提已由真机取证（2026-09-14 `--spike`，已授权辅助功能）
+    ///
+    /// **`AXExtrasMenuBar` 只返回「活动屏」的项** —— 26 条池中，14 条可用条目（微信/UU远程/Clash/
+    /// Notion/WorkBuddy/NotchRail/Snipaste/Kiro/天气/拼音/密码/输入法/控制中心×3）**全部落在活动屏**；
+    /// 非活动屏只回了 12 条控制中心条目，且**位置全为退化的 `(0,956,0x0)`**（尺寸 0，不可用于匹配）。
+    ///
+    /// ⇒ **「按屏过滤」被永久否决**：池中本就没有非活动屏的可用数据，过滤只会把仅有的活动屏数据也丢掉。
+    /// 非活动屏的身份改由 `MenuBarWindowScanner.resolveIdentity` 的「窗口标题即 Bundle ID」分支（第 4 步）承担。
+    ///
+    /// ## ⚠️ 比对基准必须是「水平中心」，不能是 `minX`
+    ///
+    /// 实测 15 个活动屏窗口 × 14 条 AX 条目对照：
+    /// - **按 `minX`**：命中 10/15，漏配 5（控制中心占位的 3 项偏 8pt、Snipaste 偏 7pt，均超出容差）；
+    /// - **按水平中心**：命中 14/15，且**全部 14 对偏差为 0.0**（完全重合），唯一漏配项在 AX 池中无对应条目。
+    ///
+    /// 原因是 AX 元素有时只是状态项的**内层内容**（左右各内缩若干 pt，如 Snipaste 的 AX 宽 24 对窗口宽 38），
+    /// 此时只有**中心**是不变量。故容差维持 6.0 即可，且比原实现更宽松可靠。
     public static func resolveApp(forFrame frame: CGRect, in entries: [Entry], tolerance: CGFloat = 6.0) -> Entry? {
         var best: (entry: Entry, distance: CGFloat)?
         for entry in entries {
-            let distance = abs(entry.position.x - frame.minX)
+            let distance = abs(entry.position.x + entry.size.width / 2 - frame.midX)
             if distance <= tolerance, best == nil || distance < best!.distance {
                 best = (entry, distance)
             }
@@ -293,6 +316,7 @@ public actor MenuBarAXResolver {
             let appName = app.localizedName ?? "应用"
 
             results.append(Entry(
+                processIdentifier: pid,
                 appName: appName,
                 bundleIdentifier: app.bundleIdentifier,
                 title: (title?.isEmpty == false ? title : nil),

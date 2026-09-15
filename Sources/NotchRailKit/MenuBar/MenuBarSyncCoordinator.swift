@@ -23,12 +23,10 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         public static let SCAN_DEBOUNCE_SECONDS: TimeInterval = 0.10
     }
     
-    @Published public private(set) var latestSnapshot: MenuBarSnapshot?
-    @Published public private(set) var allDiscoveredItems: [MenuBarItem] = []
     @Published public private(set) var isScanning: Bool = false
     @Published public private(set) var isPrewarming: Bool = false
     
-    private var discoveredItemsMap: [String: MenuBarItem] = [:]
+    /// 各屏独立快照池（按 displayID 隔离，严禁跨屏借用兜底 AGENTS.md §2.1）
     private var snapshotsByDisplay: [CGDirectDisplayID: MenuBarSnapshot] = [:]
     
     /// 心跳按需运行状态
@@ -87,6 +85,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         heartbeatState = .dormant
     }
     
+    /// 指定屏幕当前是否处于展开态（按屏独立判定，杜绝任一屏展开即让全屏全量重捕获）
+    public func isExpanded(displayID: CGDirectDisplayID) -> Bool {
+        expandedDisplayIDs.contains(displayID)
+    }
+    
     /// 设置特定显示器的灵动岛展开状态并聚合多屏心跳调度
     public func setExpansionState(isExpanded: Bool, for displayID: CGDirectDisplayID) {
         if isExpanded {
@@ -94,7 +97,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             // 展开第 0 帧：若该屏幕溢出项已在专属快照中，立即触发一次定向直出/就绪解析，杜绝 2.0s 心跳等待真空期
             if let snap = snapshotsByDisplay[displayID], !snap.overflowItems.isEmpty {
                 Task {
-                    await IconResolver.shared.resolveIcons(for: snap.overflowItems, forceRefresh: false)
+                    await IconResolver.shared.resolveIcons(
+                        for: snap.overflowItems,
+                        displayID: displayID,
+                        forceRefresh: false
+                    )
                 }
             }
             activateHeartbeat()
@@ -217,27 +224,43 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             // 2. 优先解析灵动岛内展示的溢出项（受 Cache-Hit Bypass 保护，已有项 0ms 跳过；显式重扫全量刷新）
             let overflowed = currentSnapshot.overflowItems
             if !overflowed.isEmpty {
-                await IconResolver.shared.resolveIcons(for: overflowed, forceRefresh: showProgress)
+                await IconResolver.shared.resolveIcons(
+                    for: overflowed,
+                    displayID: currentSnapshot.displayID,
+                    forceRefresh: showProgress
+                )
             }
             
             // 3. 立即原子发布当前屏幕快照（此时灵动岛内的溢出项图标已 100% 准备就绪，展开即见真实图标，0 等待！）
             await MainActor.run {
+                // 按屏无差别广播：快照自身携带 displayID，由订阅方按本屏过滤，
+                // 杜绝「仅焦点屏才刷新」导致非焦点屏 UI 停滞
                 self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
-                if currentSnapshot.displayID == ScreenManager.shared.currentGeometry.displayID {
-                    self.latestSnapshot = currentSnapshot
-                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
-                }
+                NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
                 self.isPrewarming = false
             }
             
             // 4. 后台解析剩余原生可见项（供偏好设置面板完整显示，并注入跨屏应用级视觉蓄水池）
             // 在初次启动、显式全量扫描(showProgress == true)时对当前聚焦屏所有项建立真实位图缓存；
-            // 日常心跳时对未进入蓄水池的项定向补解，确保非激活屏随时可直出
+            // 日常心跳时对未进入蓄水池的项定向补解，确保非激活屏随时可直出。
+            //
+            // ⚠️ 除「尚无位图」外，**位图倍率低于本屏倍率**的项同样必须重捕获：
+            // 跨屏共享层（应用资产注册表 / 持久缓存）可能只持有低倍率屏捕获的位图，本屏（高倍率）
+            // 若因「已有位图」而跳过，就会长期以放大渲染呈现模糊图标（真机实测：2x 内建屏消费
+            // 1x 外接屏位图，14 项中 10 项发糊）。重捕获会把高倍率位图写回共享层（写入侧不降级），
+            // 两屏随之同时受益，且条件收敛（捕获成功后倍率达标，不再重复触发）。
+            let screenScale = currentGeom.scaleFactor
             let unbufferedVisible = currentSnapshot.allItems.filter { item in
-                showProgress || IconResolver.shared.image(for: item) == nil
+                if showProgress { return true }
+                guard let best = IconResolver.shared.bestAvailableScale(for: item) else { return true }
+                return best + 0.01 < screenScale
             }
             if !unbufferedVisible.isEmpty {
-                await IconResolver.shared.resolveIcons(for: unbufferedVisible, forceRefresh: showProgress)
+                await IconResolver.shared.resolveIcons(
+                    for: unbufferedVisible,
+                    displayID: currentSnapshot.displayID,
+                    forceRefresh: showProgress
+                )
             }
             
             // 5. 并行预热其他连接屏幕（仅在初次未扫描、显式重扫、或灵动岛展开时刷新动态数值项）
@@ -254,7 +277,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                             customItemOrder: customOrder
                         )
                         if !otherSnap.overflowItems.isEmpty {
-                            await IconResolver.shared.resolveIcons(for: otherSnap.overflowItems, forceRefresh: showProgress)
+                            await IconResolver.shared.resolveIcons(
+                                for: otherSnap.overflowItems,
+                                displayID: otherGeom.displayID,
+                                forceRefresh: showProgress
+                            )
                         }
                         otherSnapshots[otherGeom.displayID] = otherSnap
                     }
@@ -269,24 +296,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             
             await MainActor.run {
-                // 5. 汇总所有活动屏幕发现的实时应用至全局注册池（原子替换，剔除已退出的应用）
-                var newDiscoveredMap: [String: MenuBarItem] = [:]
-                for item in currentSnapshot.allItems {
-                    let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
-                    newDiscoveredMap[key] = item
-                }
-                for (_, otherSnap) in otherSnapshots {
-                    for item in otherSnap.allItems {
-                        let key = item.bundleIdentifier ?? item.title ?? "win.\(item.windowID)"
-                        if newDiscoveredMap[key] == nil {
-                            newDiscoveredMap[key] = item
-                        }
-                    }
-                }
-                self.discoveredItemsMap = newDiscoveredMap
-                self.allDiscoveredItems = Array(newDiscoveredMap.values).sorted { ($0.title ?? "") < ($1.title ?? "") }
-                
-                // 6. 更新副屏快照池缓存并原子广播各屏专属更新
+                // 5. 更新各屏快照池缓存并原子广播各屏专属更新（快照自带 displayID，订阅方按本屏过滤）
                 for (dispID, snap) in otherSnapshots {
                     self.snapshotsByDisplay[dispID] = snap
                     NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: snap)
@@ -313,10 +323,8 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             customItemOrder: prefs.customItemOrder
         )
         self.snapshotsByDisplay[geom.displayID] = updatedSnapshot
-        if geom.displayID == ScreenManager.shared.currentGeometry.displayID {
-            self.latestSnapshot = updatedSnapshot
-            NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: updatedSnapshot)
-        }
+        // 按屏无差别广播：仅该屏的订阅方会据 displayID 采纳本次更新
+        NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: updatedSnapshot)
     }
     
     /// 注册系统通知观察者
@@ -366,7 +374,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 guard let self = self else { return }
                 if let geom = notif.object as? NotchGeometry,
                    let existingSnapshot = self.snapshotsByDisplay[geom.displayID] {
-                    self.latestSnapshot = existingSnapshot
                     NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: existingSnapshot)
                 }
             }

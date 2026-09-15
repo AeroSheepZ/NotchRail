@@ -9,14 +9,19 @@ public struct IslandRootView: View {
     @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject private var iconResolver = IconResolver.shared
-    
+
+    /// 构建指定屏幕的灵动岛根视图
+    ///
+    /// - Important: 两个参数**均为必填**。生产路径（`IslandWindowCoordinator.createPanel`）必须显式
+    ///   绑定本屏 `displayID` 与本屏专属状态机。此处刻意**不提供默认值**：一旦留空就会静默回退到
+    ///   主屏基准屏或 `IslandStateMachine.shared`，造成跨屏错渲染却无任何报错 —— 违反 AGENTS.md §2.1
+    ///   「严禁回退到别的屏幕或某个单例」。去掉默认值后，「漏传」在编译期即暴露。
     public init(
-        displayID: CGDirectDisplayID? = nil,
-        stateMachine: IslandStateMachine? = nil
+        displayID: CGDirectDisplayID,
+        stateMachine: IslandStateMachine
     ) {
-        let actualDisplayID = displayID ?? ScreenManager.shared.primaryGeometry.displayID
-        self.displayID = actualDisplayID
-        self.stateMachine = stateMachine ?? IslandStateMachine.shared
+        self.displayID = displayID
+        self.stateMachine = stateMachine
     }
     
     public var body: some View {
@@ -99,6 +104,7 @@ public struct IslandRootView: View {
                                     items: overflowItems,
                                     iconResolver: iconResolver,
                                     onItemTap: handleItemTap,
+                                    onItemSecondaryClick: handleItemSecondaryClick,
                                     onReorder: { reordered in
                                         let newOrder = reordered.map { $0.bundleIdentifier ?? $0.persistentKey }
                                         preferenceStore.setCustomItemOrder(newOrder)
@@ -165,16 +171,40 @@ public struct IslandRootView: View {
         }
     }
     
+    /// 左键单击：当场派发，随后按偏好原子收起
+    ///
+    /// 全程**不引入任何双击判定窗口**：用户对菜单栏图标的诉求只有「单击触发」与
+    /// 「辅助点击（触控板双指 / 鼠标右键）触发原生菜单」两种，不存在双击语义。
+    /// 若为了等待双击而把收起延后一个双击间隔，或为第二击补发 `clickState = 2`，
+    /// 都会把双击间隔内对同一图标的第二次单击吞掉，表现为「单击时灵时不灵」。
     private func handleItemTap(_ targetItem: MenuBarItem) async -> Bool {
-        let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem)
+        let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem, kind: .single)
         switch clickResult {
         case .success:
-            if preferenceStore.preferences.autoCollapseOnClick {
-                stateMachine.triggerCollapse()
-            }
+            collapseIfEnabled()
             return true
         case .failure:
             return false
         }
+    }
+
+    /// 辅助点击（触控板双指点击 / 鼠标右键）：把右键透传给归属应用，由它弹出自己的原生菜单
+    private func handleItemSecondaryClick(_ targetItem: MenuBarItem) async -> Bool {
+        let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem, kind: .secondary)
+        switch clickResult {
+        case .success:
+            collapseIfEnabled()
+            return true
+        case .failure:
+            return false
+        }
+    }
+
+    /// 按偏好立即原子收起
+    ///
+    /// 收起是**必需**的：灵动岛视口层级高于应用菜单窗口，若保持展开会遮挡刚弹出的原生菜单。
+    private func collapseIfEnabled() {
+        guard preferenceStore.preferences.autoCollapseOnClick else { return }
+        stateMachine.triggerCollapse()
     }
 }

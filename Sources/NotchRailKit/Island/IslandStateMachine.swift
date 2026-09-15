@@ -22,8 +22,16 @@ public enum IslandDisplayState: String, Equatable, Sendable {
 }
 
 /// 灵动岛展开/收起状态机控制器
+///
+/// **多屏契约**：每块屏幕各自持有一台独立实例，由 `IslandWindowCoordinator` 按 `displayID` 注册与取用，
+/// 状态机之间物理隔离、互不抢夺。生产路径**一律**经 `IslandWindowCoordinator.stateMachine(for:)` 获取，
+/// 严禁任何视图或协调器跨屏复用同一台状态机。
 @MainActor
 public final class IslandStateMachine: ObservableObject {
+    /// 不绑定任何屏幕的独立实例
+    ///
+    /// **仅供单元测试与 SwiftUI 预览等无屏上下文场景使用**；生产代码不得引用本实例，
+    /// 否则会让某块屏幕的行为隐式绑定到「全局」，正是多屏双轨架构要杜绝的回退方向。
     public static let shared = IslandStateMachine()
     
     @Published public private(set) var currentState: IslandDisplayState = .compact

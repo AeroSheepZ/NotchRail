@@ -2,10 +2,10 @@
 # NotchRail 文档一致性校验闸门
 #
 # 依据：AGENTS.md §0「事实唯一归属（Single Home per Fact）」
-# 目的：机器化拦截「文档幻觉」——已删符号残留、受管数值内联、术语禁用词外泄、
-#       ADR 与相对链接失效、版本号口径不一致。
+# 目的：机器化拦截「文档幻觉」——已删符号残留、多屏方向回退（旧双槽位模型符号）、
+#       受管数值内联、术语禁用词外泄、ADR 与相对链接失效、版本号口径不一致。
 #
-# 覆盖 5 类校验，任一类失败即退出码非 0（可直接用于 CI 闸门）。
+# 覆盖 6 类校验，任一类失败即退出码非 0（可直接用于 CI 闸门）。
 # 行内出现 `check-docs:allow` 注释的行会被跳过，作为受控逃生舱口。
 
 set -uo pipefail
@@ -42,7 +42,7 @@ scan() { # scan <ERE> <files...>
 printf '\033[1m🔍 NotchRail 文档一致性校验\033[0m  (%d 份发布区文档)\n' "${#PUBLISHED[@]}"
 
 # ---- 1. 已删符号残留 --------------------------------------------------------
-section '1/5 已删符号残留'
+section '1/6 已删符号残留'
 DELETED_SYMBOLS=(
   'ignoredBundleIDs'
   'hideItem('
@@ -54,6 +54,9 @@ DELETED_SYMBOLS=(
   'frontmostAppMenuMaxX'
   'isWithinScreenSpan'
   'APP_MENU_COLLISION_MARGIN'
+  'latestSnapshot'
+  'allDiscoveredItems'
+  'discoveredItemsMap'
 )
 hit=0
 for sym in "${DELETED_SYMBOLS[@]}"; do
@@ -65,8 +68,38 @@ for sym in "${DELETED_SYMBOLS[@]}"; do
 done
 [ "$hit" -eq 0 ] && pass '无已删/错名符号残留' || fail '存在已删或错名符号（见上）'
 
-# ---- 2. 受管数值内联 --------------------------------------------------------
-section '2/5 受管数值内联（文档只准引常量名，禁止写数值）'
+# ---- 2. 旧双槽位模型符号（多屏方向回退） -----------------------------------
+# 依据：AGENTS.md §2.1 与 docs/adr/0009 —— 视口与状态机一律按 displayID 注册，
+#       屏幕数量不设上限，禁止 primary*/external* 式成对槽位字段。
+# 作用域：现状文档。docs/adr/ 正文不可改写、docs/SPEC.md 为历史归档，二者豁免
+#       （ADR 0008 正文与 0009 背景必须指名旧模型才能说清「取代了什么」）。
+# 注：只拦标识符，不拦「双面板 / 双屏独立」等中文措辞——ADR 标题引用与历史版本
+#     描述中它们都是正当用法，强行拦截只会制造大量逃生舱口注释，反而削弱闸门。
+section '2/6 旧双槽位模型符号（多屏方向回退）'
+HISTORICAL_ONLY_SYMBOLS=(
+  'primaryPanel'
+  'externalPanel'
+  'primaryStateMachine'
+  'externalStateMachine'
+  'externalOwnedDisplayID'
+)
+CURRENT_SCOPE=()
+for f in "${PUBLISHED[@]}"; do
+  case "$f" in docs/adr/*|docs/SPEC.md) ;; *) CURRENT_SCOPE+=("$f") ;; esac
+done
+hit=0
+for sym in "${HISTORICAL_ONLY_SYMBOLS[@]}"; do
+  # 标识符用字符边界匹配，避免误伤以它为前缀的更长名字（BSD grep 不支持 \b）。
+  out="$(scan "(^|[^A-Za-z0-9_])${sym}([^A-Za-z0-9_]|\$)" "${CURRENT_SCOPE[@]}")"
+  if [ -n "$out" ]; then
+    hit=1
+    printf '     回退符号 `%s` 出现在现状文档:\n%s\n' "$sym" "$(printf '%s\n' "$out" | sed 's/^/       /')"
+  fi
+done
+[ "$hit" -eq 0 ] && pass '现状文档未回退到旧双槽位面板模型' || fail '现状文档出现旧双槽位符号——方向回退（见上）'
+
+# ---- 3. 受管数值内联 --------------------------------------------------------
+section '3/6 受管数值内联（文档只准引常量名，禁止写数值）'
 # 与代码具名常量一一对应；加非数字边界，避免误伤版本号（如 v0.0.9）。
 MANAGED_NUMBERS=(
   '(^|[^0-9.])24(\.0)?pt([^a-zA-Z0-9]|$)'
@@ -92,8 +125,8 @@ for pat in "${MANAGED_NUMBERS[@]}"; do
 done
 [ "$hit" -eq 0 ] && pass '发布区（ADR 除外）无受管数值内联' || fail '存在受管数值内联（见上）'
 
-# ---- 3. 术语禁用词外泄 ------------------------------------------------------
-section '3/5 术语禁用词（CONTEXT.md 的 _Avoid_）外泄'
+# ---- 4. 术语禁用词外泄 ------------------------------------------------------
+section '4/6 术语禁用词（CONTEXT.md 的 _Avoid_）外泄'
 AVOID_TERMS="$(sed -n 's/^_Avoid_:[[:space:]]*//p' CONTEXT.md | tr -d '\r' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$')"
 others=()
 for f in "${PUBLISHED[@]}"; do [ "$f" != "CONTEXT.md" ] && others+=("$f"); done
@@ -113,8 +146,8 @@ $AVOID_TERMS
 EOF
 [ "$hit" -eq 0 ] && pass "无禁用词外泄（已核对 $(printf '%s\n' "$AVOID_TERMS" | grep -c .) 个别名）" || fail '存在禁用词外泄（见上）'
 
-# ---- 4. ADR 与相对路径引用完整性 -------------------------------------------
-section '4/5 ADR 编号与相对路径引用完整性'
+# ---- 5. ADR 与相对路径引用完整性 -------------------------------------------
+section '5/6 ADR 编号与相对路径引用完整性'
 hit=0
 refs="$(grep -ohE '([A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md' "${PUBLISHED[@]}" 2>/dev/null | sort -u)"
 while IFS= read -r ref; do
@@ -146,8 +179,8 @@ for f in docs/adr/*.md; do
 done
 [ "$hit" -eq 0 ] && pass 'ADR 编号连续、文档内 .md 引用均可解析' || fail '存在失效引用或 ADR 命名问题（见上）'
 
-# ---- 5. 版本号口径一致 ------------------------------------------------------
-section '5/5 版本号口径一致'
+# ---- 6. 版本号口径一致 ------------------------------------------------------
+section '6/6 版本号口径一致'
 CODE_VERSION="$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' scripts/build_app.sh | head -1)"
 if [ -z "$CODE_VERSION" ]; then
   fail '无法从 scripts/build_app.sh 读取 VERSION'

@@ -138,7 +138,13 @@ public final class IconResolver: ObservableObject {
     // MARK: - 主解析入口
 
     /// 批量解析菜单栏项图标（内存已有项 0ms 瞬间直出，后台通过 isVisuallyEqual 动态增量比对实时刷新三方数值）
-    public func resolveIcons(for items: [MenuBarItem], forceRefresh: Bool = false) async {
+    /// - Parameter displayID: 本批项所属屏幕。动态数值的全量重捕获判定**按屏独立**，
+    ///   避免任一屏展开就把所有屏拖入全量截图（多屏能耗线性膨胀的根源）。
+    public func resolveIcons(
+        for items: [MenuBarItem],
+        displayID: CGDirectDisplayID,
+        forceRefresh: Bool = false
+    ) async {
         guard !items.isEmpty else { return }
 
         // 1. 已有内存缓存的项先置为 loaded 状态（0ms 瞬间直出，彻底杜绝空白占位）
@@ -168,7 +174,7 @@ public final class IconResolver: ObservableObject {
 
         // 3. 增量缓存直出旁路过滤：静默休眠态下跳过已有位图的项，杜绝切屏获焦时重复截图
         let itemsToCapture: [MenuBarItem]
-        if forceRefresh || MenuBarSyncCoordinator.shared.heartbeatState == .active {
+        if forceRefresh || MenuBarSyncCoordinator.shared.isExpanded(displayID: displayID) {
             // 显式全量重扫或灵动岛展开活跃心跳态：全量捕获以比对动态数值（网速、时钟等）
             itemsToCapture = items
         } else {
@@ -186,9 +192,12 @@ public final class IconResolver: ObservableObject {
         apply(result, to: itemsToCapture)
     }
 
-    /// 兼容旧调用方的同步快照式 API
-    public func resolveIconsSnapshot(for items: [MenuBarItem]) async -> [UUID: ResolvedIcon] {
-        await resolveIcons(for: items, forceRefresh: true)
+    /// 同步快照式 API（诊断与测试路径）：一次性解析并返回结果
+    public func resolveIconsSnapshot(
+        for items: [MenuBarItem],
+        displayID: CGDirectDisplayID
+    ) async -> [UUID: ResolvedIcon] {
+        await resolveIcons(for: items, displayID: displayID, forceRefresh: true)
         var result: [UUID: ResolvedIcon] = [:]
         for item in items {
             switch iconStates[item.iconCacheKey] {
@@ -219,9 +228,12 @@ public final class IconResolver: ObservableObject {
                 let existingIcon = cache[key]
                 if !CapturedIcon.isVisuallyEqual(existingIcon, icon) || !isAlreadyLoaded {
                     cache[key] = icon
-                    persistentCache[item.persistentKey] = icon
+                    // 跨屏复用层（应用资产注册表 / 跨窗口持久缓存）**绝不降级分辨率** —— 见
+                    // `storeKeepingHighestResolution` 的说明。低倍率位图一旦覆盖高倍率位图，
+                    // 高倍率屏会长期呈现放大后的模糊图标。
+                    Self.storeKeepingHighestResolution(&persistentCache, key: item.persistentKey, icon: icon)
                     if let bundleID = item.bundleIdentifier, !bundleID.isEmpty {
-                        appAssetVault[bundleID] = icon
+                        Self.storeKeepingHighestResolution(&appAssetVault, key: bundleID, icon: icon)
                     }
                     updatedStates[key] = .loaded(icon.nsImage)
                     touchAccessOrder(for: key)
@@ -309,6 +321,27 @@ public final class IconResolver: ObservableObject {
         cache[item.iconCacheKey]
             ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
             ?? persistentCache[item.persistentKey]
+    }
+
+    /// 写入跨屏复用层，且**绝不降级分辨率**
+    ///
+    /// 应用资产注册表（`appAssetVault`）与跨窗口持久缓存（`persistentCache`）是同一 Bundle ID /
+    /// 持久键在**所有屏幕**共享的图元来源，因此写入方来自哪块屏并不确定：
+    /// 1x 平直外接屏先捕获、2x 内建刘海屏后捕获（或反之）都会调用本方法。
+    ///
+    /// 若不做保护，低倍率位图会覆盖高倍率位图，高倍率屏随后按逻辑尺寸放大渲染 →
+    /// 图标整体发糊（真机实测：2x 内建屏消费 1x 位图时 14 项中 10 项发糊）。故仅当新位图的
+    /// `scale` **严格高于**已存位图时才覆盖；倍率相同时保留既有位图（像素量一致，无收益且
+    /// 避免无谓替换）。可见性为 internal 以支持 Spike 契约用例直接验证。
+    nonisolated static func storeKeepingHighestResolution(
+        _ store: inout [String: CapturedIcon],
+        key: String,
+        icon: CapturedIcon
+    ) {
+        if let existing = store[key], existing.scale >= icon.scale {
+            return
+        }
+        store[key] = icon
     }
 
     /// 判断给定 iconCacheKey 在状态表中是否已处于 loaded 态
@@ -466,6 +499,53 @@ public final class IconResolver: ObservableObject {
         }
         return nil
     }
+
+    // MARK: - 诊断（只读，不改变任何状态）
+
+    /// 图元来源层次（诊断用）
+    public enum IconSourceLayer: String, Sendable {
+        case cache      // 本屏窗口级内存缓存（含由共享层回填的项）
+        case vault      // 全局应用资产注册表（跨屏共享）
+        case persistent // 跨窗口持久缓存（跨屏共享）
+        case none       // 三层皆无 → 非激活屏只能长期停在占位态
+    }
+
+    /// 诊断用：查询某项图元的**跨屏共享层**来源（刻意忽略本屏窗口缓存）
+    ///
+    /// 非激活屏截图必全透明，其图标**只能**由跨屏共享层直出，故此项即该屏的真实供图能力。
+    public func diagnoseCrossScreenSource(for item: MenuBarItem) -> IconSourceLayer {
+        if let bundleID = item.bundleIdentifier, appAssetVault[bundleID] != nil { return .vault }
+        if persistentCache[item.persistentKey] != nil { return .persistent }
+        return .none
+    }
+
+    /// 某项当前可得的**最高**位图倍率（本屏缓存 / 应用资产注册表 / 持久缓存三者取最大）
+    ///
+    /// 用于判定是否需要为某项重新捕获：跨屏共享层可能只持有**低倍率屏**捕获的位图，
+    /// 此时高倍率屏若因「已有位图」而跳过捕获，就会长期以放大渲染呈现模糊图标。
+    /// 返回 nil 表示三层均无该位图（必须捕获）。
+    public func bestAvailableScale(for item: MenuBarItem) -> CGFloat? {
+        var best = cache[item.iconCacheKey]?.scale
+        if let bundleID = item.bundleIdentifier, let v = appAssetVault[bundleID] {
+            best = max(best ?? 0, v.scale)
+        }
+        if let p = persistentCache[item.persistentKey] {
+            best = max(best ?? 0, p.scale)
+        }
+        return best
+    }
+
+    /// 诊断用：应用资产注册表内容快照（键 → 倍率与像素尺寸），按键排序
+    ///
+    /// 倍率是判定「非激活屏图标发糊」的直接证据：共享层位图倍率低于消费屏倍率时必被放大。
+    public var diagnoseVaultContents: [(key: String, scale: CGFloat, pixelSize: CGSize)] {
+        appAssetVault
+            .map { ($0.key, $0.value.scale, CGSize(width: $0.value.cgImage.width, height: $0.value.cgImage.height)) }
+            .sorted { $0.key < $1.key }
+    }
+
+    /// 诊断用：跨窗口持久缓存条目数
+    public var diagnosePersistentCount: Int { persistentCache.count }
 
     /// 清空内存缓存（偏好设置变更时调用）
     public func clearCache() {

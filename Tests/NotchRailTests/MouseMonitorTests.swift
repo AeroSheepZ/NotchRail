@@ -258,8 +258,18 @@ final class MouseMonitorTests: XCTestCase {
     }
     
     func testIslandHostingViewHitTestPassthrough() {
-        let hostingView = IslandHostingView(rootView: IslandRootView())
+        // 宿主视图必须显式绑定屏幕（多屏契约：命中区一律按本屏几何与本屏状态机计算）
+        let hostingView = IslandHostingView(
+            rootView: IslandRootView(displayID: 99, stateMachine: IslandStateMachine.shared),
+            displayID: 99
+        )
         hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 84)
+
+        // displayID 99 在 ScreenManager 中不存在 → 命中区必须严格归零，绝不跨屏借用兜底
+        XCTAssertNil(
+            hostingView.hitTest(NSPoint(x: 400, y: 42)),
+            "未注册的 displayID 不得认领任何鼠标事件（严禁跨屏借用）"
+        )
         
         let stateMachine = IslandStateMachine.shared
         

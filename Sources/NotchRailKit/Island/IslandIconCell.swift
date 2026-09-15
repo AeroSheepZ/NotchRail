@@ -12,7 +12,10 @@ import AppKit
 public struct IslandIconCell: View {
     public let item: MenuBarItem
     public let state: IconState
+    /// 左键单击回调
     public var onTap: (MenuBarItem) async -> Bool
+    /// 辅助点击（触控板双指点击 / 鼠标右键）回调
+    public var onSecondaryClick: (MenuBarItem) async -> Bool
 
     @State private var isHovered: Bool = false
     @State private var shakeCount: CGFloat = 0
@@ -33,11 +36,13 @@ public struct IslandIconCell: View {
     public init(
         item: MenuBarItem,
         state: IconState = .pending,
-        onTap: @escaping (MenuBarItem) async -> Bool = { _ in true }
+        onTap: @escaping (MenuBarItem) async -> Bool = { _ in true },
+        onSecondaryClick: @escaping (MenuBarItem) async -> Bool = { _ in true }
     ) {
         self.item = item
         self.state = state
         self.onTap = onTap
+        self.onSecondaryClick = onSecondaryClick
     }
 
     // MARK: - 派生尺寸
@@ -87,7 +92,7 @@ public struct IslandIconCell: View {
 
     public var body: some View {
         Button {
-            triggerAction()
+            triggerSingleClick()
         } label: {
             ZStack {
                 // 仅悬停时展示原生风格的平滑高亮胶囊背景，常态保持纯净通透
@@ -109,6 +114,11 @@ public struct IslandIconCell: View {
             .modifier(ShakeEffect(shakes: shakeCount))
         }
         .buttonStyle(SpringIconButtonStyle())
+        .overlay(
+            // 辅助点击（触控板双指 / 鼠标右键）的几何锚点：只提供「这一点落在本图标上」的答案，
+            // 事件本身由 App 级监听器裁决（见 IslandWindowCoordinator），本层绝不认领任何事件
+            IslandIconHitZone(onSecondaryClick: { triggerSecondaryClick() })
+        )
         .onHover { hovered in
             withAnimation(IslandTheme.Animation.HOVER_SPRING) {
                 isHovered = hovered
@@ -169,9 +179,26 @@ public struct IslandIconCell: View {
 
     // MARK: - 交互
 
-    private func triggerAction() {
+    /// 左键单击派发入口（`Button` 的 action）
+    ///
+    /// 只发单击、只发一次：菜单栏图标不存在双击语义，绝不按 `clickCount` 再分流
+    /// （那会让双击间隔内的第二次单击被误判成双击而丢失，见 `MenuBarClickKind`）。
+    private func triggerSingleClick() {
+        run(onTap)
+    }
+
+    /// 辅助点击派发入口（触控板双指点击 / 鼠标右键）
+    ///
+    /// 由 `IslandIconHitZone` 的几何锚点经 `IslandSecondaryClickRouter`（视口宿主视图的
+    /// `rightMouseDown` 处）裁决后转入。
+    private func triggerSecondaryClick() {
+        run(onSecondaryClick)
+    }
+
+    /// 统一执行派发动作并给出触觉 / Shake 反馈
+    private func run(_ action: @escaping (MenuBarItem) async -> Bool) {
         Task {
-            let success = await onTap(item)
+            let success = await action(item)
             let enableHaptic = PreferenceStore.shared.preferences.enableHapticFeedback
             if success {
                 if enableHaptic {

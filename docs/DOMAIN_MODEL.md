@@ -16,6 +16,7 @@ classDiagram
         +UUID id
         +CGWindowID windowID
         +pid_t processIdentifier
+        +pid_t? sourcePID
         +String? bundleIdentifier
         +String? title
         +CGRect nativeFrame
@@ -26,9 +27,11 @@ classDiagram
         +String iconCacheKey
         +String persistentKey
         +String preferenceKey
+        +pid_t clickTargetPID
     }
 
     class AXEntry {
+        +pid_t processIdentifier
         +String appName
         +String bundleIdentifier
         +String title
@@ -113,7 +116,10 @@ classDiagram
 public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let windowID: CGWindowID
+    /// 状态项窗口的 owner 进程（恒为控制中心宿主），**同时是事件派发的唯一正确目标**
     public let processIdentifier: pid_t
+    /// 经 AX 空间配对解析出的真实归属应用 PID（仅供图元归属与 AX 元素定位，不参与点击派发；未配到时为 nil）
+    public let sourcePID: pid_t?
     public let bundleIdentifier: String?
     public let title: String?
     public let axIdentifier: String?
@@ -140,6 +146,9 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     /// 统一偏好与排序唯一标识键（优先 Bundle ID，回退持久化键）
     public var preferenceKey: String
     
+    /// 事件派发的目标进程（**恒为窗口 owner**，即 `processIdentifier`；理由见 ADR 0010）
+    public var clickTargetPID: pid_t
+    
     public enum DisplayMode: String, Codable, Sendable {
         case nativeVisible   // 在原生菜单栏清晰可见
         case overflowed      // 因刘海遮挡或空间不足被挤出原生菜单栏
@@ -157,6 +166,8 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
 
 ```swift
 public struct Entry: Sendable {
+    /// 持有该 AXExtrasMenuBar 的应用本身 PID —— 事件派发的正确目标来源
+    public let processIdentifier: pid_t
     public let appName: String
     public let bundleIdentifier: String?
     public let title: String?
@@ -259,7 +270,27 @@ public struct NotchGeometry: Equatable, Sendable, Identifiable {
   - `compactBounds`：常态归零（`.zero`），面板 100% 隐形（`alpha = 0`，`ignoresMouseEvents = true`）；
   - `appMenuRightEdge`：动态捕获前台活跃应用主菜单的右边缘 X 坐标，作为状态项挤压碰撞阈值；
   - **展开形态（统一黑仿真灵动岛）**：彻底废除平直托轨（flat-docked shelf）形态。外接平直屏展开形态与刘海屏灵动岛**视觉完全统一**，均保留 `IslandTheme.CornerRadius.TOP_EAR` 经典外展喇叭弧、纯黑吸光底座与微光渐变描边；
-  - **视口架构（聚焦流转架构 Focus Following Architecture）**：彻底废除“视口借调（Viewport Leasing）”概念与术语。面板归属权由屏幕焦点唯一决定，折叠常态外接屏处于 `externalStealth`（100% 隐形穿透），触碰顶部中央热区即时原位升起展开。
+  - **视口架构（聚焦流转架构 Focus Following Architecture）**：彻底废除“视口借调（Viewport Leasing）”概念与术语。每块屏的视口只属于该屏（按 `displayID` 注册，见 `AGENTS.md` §2.1），折叠常态外接屏处于 `externalStealth`（100% 隐形穿透），触碰顶部中央热区即时原位升起展开；屏幕焦点只决定用户正在与哪块屏交互，绝不迁移或借用视口。
+
+### 2.7 点击派发契约 (`MenuBarItemClicker`)
+
+岛内图标的点击语义只有两种，**刻意不含「左键双击」**（理由见 ADR 0010）：
+
+```swift
+public enum MenuBarClickKind: String, Sendable {
+    case single      // 左键单击
+    case secondary   // 辅助点击（触控板双指点击 = 鼠标右键，二者是同一个操作）
+}
+
+public enum ClickError: Error, Sendable {
+    case invalidWindow      // 缺少有效 windowID（非窗口枚举路径）
+    case frameUnavailable   // 无法获取窗口实时 frame
+    case eventCreationFailed
+    case noResponse         // 事件已送达该状态项，但目标应用在响应观察窗内无可见响应（非「不可达」）
+}
+```
+
+派发目标恒为 `MenuBarItem.clickTargetPID`；两条投递通道（宿主激活 / 会话事件流 + 目标窗口字段）的通道边界、不予 `isOnScreen` 分流的原因与响应判定，见 [ADR 0010](adr/0010-status-item-owner-event-dispatch.md) 与 [ADR 0011](adr/0011-secondary-click-session-event-routing.md) 及 `AGENTS.md` §3.4，本文不复述。点击事件的字段组装以 `MenuBarClickEventFactory` 为唯一来源。
 
 ---
 
@@ -344,10 +375,13 @@ stateDiagram-v2
 | **ADR 0002** | 外接平直屏物理零刘海与动态菜单碰撞 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` |
 | **ADR 0003** | 纯物理几何判定并废弃 isOnScreen | `OverflowCalculator`, `MenuBarItem` |
 | **ADR 0004** | 零降级真实位图像素级镜像 | `CapturedIcon`, `IconResolver` |
-| **ADR 0005** | 原生物理坐标合成事件精准分发 | `MenuBarItem`, `CGEvent` |
+| **ADR 0005** | 原生物理坐标合成事件精准分发（决议被 0010 取代） | `MenuBarItem`, `CGEvent` |
 | **ADR 0006** | 稳固常驻视口与硬件级穿透管理 | `IslandWindowCoordinator`, `MouseMonitor` |
 | **ADR 0007** | 全屏空间隐退与顶边缘极窄热区唤醒 | `FullScreenDetector`, `NotchGeometry` |
-| **ADR 0008** | 双面板独立拓扑与聚焦流转架构 | `IslandWindowCoordinator`, `IconResolver`, `MenuBarSyncCoordinator` |
+| **ADR 0008** | 双面板独立拓扑与聚焦流转架构（部分被 0009 取代） | `IslandWindowCoordinator`, `IconResolver`, `MenuBarSyncCoordinator` |
+| **ADR 0009** | 多屏视口与状态机注册表 | `IslandWindowCoordinator`, `IslandHostingView`, `MenuBarItem.sourcePID` |
+| **ADR 0010** | 状态项窗口 owner 派发与双通道点击策略（决议 3、6 被 0011 取代） | `MenuBarItem.clickTargetPID`, `MenuBarClickKind`, `MenuBarClickEventFactory` |
+| **ADR 0011** | 辅助点击走会话事件流 + 目标窗口字段路由 | `MenuBarItemClicker`, `ClickError.noResponse`, `Bridging.popUpMenuWindowOwners` |
 
-> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代，详见该 ADR 顶部状态横幅。
+> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代，均详见对应 ADR 顶部的状态横幅。
 

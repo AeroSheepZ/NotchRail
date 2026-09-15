@@ -6,6 +6,7 @@ public struct ReorderableIconRow: View {
     public let items: [MenuBarItem]
     @ObservedObject public var iconResolver: IconResolver
     public var onItemTap: (MenuBarItem) async -> Bool
+    public var onItemSecondaryClick: (MenuBarItem) async -> Bool
     public var onReorder: ([MenuBarItem]) -> Void
     
     @State private var localItems: [MenuBarItem] = []
@@ -21,11 +22,13 @@ public struct ReorderableIconRow: View {
         items: [MenuBarItem],
         iconResolver: IconResolver,
         onItemTap: @escaping (MenuBarItem) async -> Bool,
+        onItemSecondaryClick: @escaping (MenuBarItem) async -> Bool = { _ in true },
         onReorder: @escaping ([MenuBarItem]) -> Void
     ) {
         self.items = items
         self.iconResolver = iconResolver
         self.onItemTap = onItemTap
+        self.onItemSecondaryClick = onItemSecondaryClick
         self.onReorder = onReorder
     }
     
@@ -44,6 +47,10 @@ public struct ReorderableIconRow: View {
                         onTap: { itm in
                             guard !isDragging else { return false }
                             return await onItemTap(itm)
+                        },
+                        onSecondaryClick: { itm in
+                            guard !isDragging else { return false }
+                            return await onItemSecondaryClick(itm)
                         }
                     )
                     .background(

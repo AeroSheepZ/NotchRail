@@ -6,7 +6,7 @@
 > （查询方式见 `docs/agents/issue-tracker.md`）；与本文冲突时，**以 Issues、代码与 `AGENTS.md` 为准**。
 >
 > - **版本演进**：见 `docs/DEVELOPMENT_PLAN.md`
-> - **架构决策**：见 `docs/adr/0001` ~ `docs/adr/0008`（ADR 正文为唯一来源，本文只引编号）
+> - **架构决策**：见 `docs/adr/0001` ~ `docs/adr/0011`（ADR 正文为唯一来源，本文只引编号）
 > - **领域术语**：见 `CONTEXT.md`（本文不定义术语）
 > - **数值与常量**：以代码中的具名常量声明为唯一来源，本文只引常量名
 

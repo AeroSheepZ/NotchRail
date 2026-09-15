@@ -8,7 +8,16 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public let id: UUID
     /// 菜单栏项窗口 ID（窗口枚举路径的主键；AX 路径为 0）
     public let windowID: CGWindowID
+    /// 窗口的 owner 进程（状态项窗口恒为控制中心宿主）
+    ///
+    /// 该值**同时是事件派发的唯一正确目标**：状态项窗口归宿主所有，投给真实应用进程时，
+    /// 其进程内不存在该 windowID 对应的窗口，AppKit 无从路由，事件被静默丢弃。
     public let processIdentifier: pid_t
+    /// 经 AXExtrasMenuBar 空间配对解析出的**真实归属应用 PID**
+    ///
+    /// 仅供图元归属、AX 元素定位、界面展示等场景使用，**不参与点击派发**（原因见 `clickTargetPID`）。
+    /// 为 nil 表示该窗口未能配到任何真实应用（如系统原生项由控制中心代管、或 AX 权限不足）。
+    public let sourcePID: pid_t?
     public let bundleIdentifier: String?
     public let title: String?
     public let axIdentifier: String?
@@ -44,6 +53,19 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     /// 统一偏好与排序唯一标识键（优先 Bundle ID，回退持久化键）
     public var preferenceKey: String {
         bundleIdentifier ?? persistentKey
+    }
+    
+    /// 事件派发的目标进程（唯一事实来源）
+    ///
+    /// **恒取状态项窗口的 owner**（`processIdentifier`）。
+    ///
+    /// 历史实现优先取 `sourcePID`（AX 反查出的真实应用），真机实测该优先级是**错的**：
+    /// 状态项窗口恒归控制中心宿主所有，把事件投给真实应用进程时，该进程内并不存在该
+    /// `windowID` 对应的窗口，AppKit 无从路由，事件被静默丢弃 —— 表现即「第三方图标点了没反应」。
+    /// 投给窗口 owner 后，由宿主完成菜单栏项激活并把动作转交真实应用；
+    /// 实测对隐藏项（`isOnScreen == false`，即被刘海挤占的那些）同样生效。
+    public var clickTargetPID: pid_t {
+        processIdentifier
     }
     
     /// 生成基于 customItemOrder 排序规则的纯函数比较器
@@ -97,6 +119,7 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         id: UUID? = nil,
         windowID: CGWindowID = 0,
         processIdentifier: pid_t,
+        sourcePID: pid_t? = nil,
         bundleIdentifier: String?,
         title: String?,
         axIdentifier: String? = nil,
@@ -111,6 +134,7 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         self.id = id ?? Self.deterministicUUID(for: windowID, pid: processIdentifier)
         self.windowID = windowID
         self.processIdentifier = processIdentifier
+        self.sourcePID = sourcePID
         self.bundleIdentifier = bundleIdentifier
         self.title = title
         self.axIdentifier = axIdentifier

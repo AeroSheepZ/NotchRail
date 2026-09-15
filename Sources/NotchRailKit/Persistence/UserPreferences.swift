@@ -23,7 +23,7 @@ public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
     
     public var displayName: String {
         switch self {
-        case .followFocusedScreen: return "双屏独立双轨模式（默认）"
+        case .followFocusedScreen: return "多屏独立多轨模式（默认）"
         case .mainScreenOnly: return "仅在主显示器（刘海屏）显示"
         case .disabled: return "外接显示器完全禁用"
         }

@@ -36,7 +36,6 @@ private enum SettingsTab: Int, CaseIterable, Identifiable {
 public struct SettingsView: View {
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject var permissionManager = PermissionManager.shared
-    @ObservedObject var syncCoordinator = MenuBarSyncCoordinator.shared
     
     /// 版式尺寸的唯一来源（设置窗口与内容区共用，避免两处各写一份而失配）
     public enum SettingsLayout {
@@ -54,6 +53,10 @@ public struct SettingsView: View {
     @State private var isRefreshingPermissions: Bool = false
     @State private var isManualScanning: Bool = false
     @State private var selectedDisplayID: CGDirectDisplayID? = nil
+    /// 当前可用屏幕拓扑（由 `ScreenManager.$allGeometries` 单向同步，作为本视图唯一的屏幕清单来源）
+    @State private var availableGeometries: [NotchGeometry] = []
+    /// 本面板所选屏幕的快照刷新脉冲（仅在**该屏**快照更新时自增，杜绝任一块屏广播导致整面板重算）
+    @State private var snapshotRevision: Int = 0
     
     public init() {}
     
@@ -75,6 +78,7 @@ public struct SettingsView: View {
             Text("所有触发模式、动画时延与显示策略都将被重置为出厂推荐配置。")
         }
         .onAppear {
+            availableGeometries = ScreenManager.shared.allGeometries
             let actualLaunchAtLogin = LaunchAtLoginManager.isEnabled
             if preferenceStore.preferences.launchAtLogin != actualLaunchAtLogin {
                 preferenceStore.update { $0.launchAtLogin = actualLaunchAtLogin }
@@ -84,6 +88,16 @@ public struct SettingsView: View {
                 let targetDisplayID = currentScreen?.displayID ?? ScreenManager.shared.primaryGeometry.displayID
                 selectedDisplayID = targetDisplayID
             }
+        }
+        // 屏幕清单单向同步：仅在拓扑变化（插拔屏 / 合盖）时更新，不随焦点屏切换重算
+        .onReceive(ScreenManager.shared.$allGeometries) { geoms in
+            availableGeometries = geoms
+        }
+        // 快照刷新：仅采纳**本面板所选屏幕**的更新，其他屏的广播一律忽略
+        .onReceive(NotificationCenter.default.publisher(for: .menuBarSnapshotUpdated)) { notif in
+            guard let snapshot = notif.object as? MenuBarSnapshot,
+                  snapshot.displayID == activeDisplayID else { return }
+            snapshotRevision &+= 1
         }
     }
 
@@ -288,8 +302,9 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
     
+    /// 本面板当前查看的屏幕（优先用户所选；所选屏已拔出时回退主屏基准屏）
     private var activeDisplayID: CGDirectDisplayID {
-        let allGeoms = ScreenManager.shared.allGeometries
+        let allGeoms = availableGeometries
         if let selected = selectedDisplayID, allGeoms.contains(where: { $0.displayID == selected }) {
             return selected
         }
@@ -303,7 +318,7 @@ public struct SettingsView: View {
     private var appsTab: some View {
         VStack(spacing: 10) {
             // 0. 多显示器分段切换选择器（多屏连接时支持手动切换查看，解耦鼠标跨屏导致的数据源抖动）
-            let allScreens = ScreenManager.shared.allGeometries
+            let allScreens = availableGeometries
             if allScreens.count > 1 {
                 Picker("显示器", selection: Binding(
                     get: { activeDisplayID },
@@ -348,7 +363,7 @@ public struct SettingsView: View {
                 )
                 
                 // 状态统计徽章与快捷排序重置
-                let allItems = filteredItems()
+                let allItems = filteredItems(revision: snapshotRevision)
                 let overflowCount = allItems.filter { $0.isOverflowed }.count
                 HStack(spacing: 6) {
                     Text("共 \(allItems.count) 项")
@@ -406,7 +421,7 @@ public struct SettingsView: View {
             }
             
             // 2. 应用列表卡片流
-            let items = filteredItems()
+            let items = filteredItems(revision: snapshotRevision)
             if items.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
@@ -460,7 +475,7 @@ public struct SettingsView: View {
                 
                 Button {
                     isManualScanning = true
-                    syncCoordinator.scheduleSync(immediate: true, showProgress: true)
+                    MenuBarSyncCoordinator.shared.scheduleSync(immediate: true, showProgress: true)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                         isManualScanning = false
                     }
@@ -505,9 +520,12 @@ public struct SettingsView: View {
         )
     }
     
-    private func filteredItems() -> [AppListEntry] {
+    /// 装配本面板所选屏幕的应用列表
+    ///
+    /// - Parameter revision: 快照刷新脉冲，仅用于建立 SwiftUI 依赖（值本身不参与计算）
+    private func filteredItems(revision: Int) -> [AppListEntry] {
         let displayID = activeDisplayID
-        let currentSnapshot = syncCoordinator.effectiveSnapshot(for: displayID)
+        let currentSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: displayID)
         let menuBarItems = currentSnapshot?.allItems ?? []
         var result: [AppListEntry] = []
         
@@ -710,7 +728,7 @@ public struct SettingsView: View {
                         isRefreshingPermissions = true
                         permissionManager.checkAccessibility(prompt: false)
                         permissionManager.checkScreenCapture(prompt: false)
-                        syncCoordinator.scheduleSync(immediate: true)
+                        MenuBarSyncCoordinator.shared.scheduleSync(immediate: true)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             isRefreshingPermissions = false
                         }

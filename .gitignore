@@ -31,5 +31,6 @@ scratch/
 
 # Internal research docs & session memory (local only, not for public repo)
 .workbuddy/
+.workbuddy-ai/
 # 本地不发布文档区：research/ 存放研究性文档，archive/ 存放历史版本归档，均不随仓库发布
 docs/local/

@@ -111,6 +111,30 @@ public enum Bridging {
         return result
     }
 
+    /// 枚举当前**弹出的菜单层窗口**（`kCGPopUpMenuWindowLevel`）→ 归属进程
+    ///
+    /// 用途：辅助点击派发后，以「观察窗内是否新出现菜单层窗口」判定目标应用**是否给出响应**
+    /// （弹出菜单即视为有对应辅助处理；无菜单则交由调用方给出抖动反馈）。
+    ///
+    /// 只取菜单层可天然滤除主要噪声：菜单栏项自身的布局扰动（`kCGStatusWindowLevel`）——
+    /// 实测每次点击后宿主都会因 `AudioVideoModule` 等状态项进出而新建 48pt 宽的窗口，
+    /// 若一并计入会永远判成「有响应」。
+    public static func popUpMenuWindowOwners() -> [CGWindowID: pid_t] {
+        let opts = CGWindowListOption([.optionAll, .excludeDesktopElements])
+        guard let list = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
+            return [:]
+        }
+        let menuLevel = Int(CGWindowLevelForKey(.popUpMenuWindow))
+        var result: [CGWindowID: pid_t] = [:]
+        for dict in list {
+            guard (dict[kCGWindowLayer as String] as? Int) == menuLevel else { continue }
+            let windowID = (dict[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
+            let ownerPID = (dict[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+            result[windowID] = ownerPID
+        }
+        return result
+    }
+
     /// 获取指定窗口的实时 frame（屏幕坐标，原点在屏幕左上角）
     public static func frame(for windowID: CGWindowID) -> CGRect? {
         var rect = CGRect.zero
@@ -194,8 +218,7 @@ public enum Bridging {
     ///   - windowIDs: 要截取的窗口 ID 列表
     ///   - screenBounds: 截取的屏幕区域（通常为所有窗口 frame 的并集）
     /// - Returns: 合成图；任一环节失败返回 nil
-    public static func captureComposite(windowIDs: [CGWindowID], screenBounds: CGRect) -> CGImage? {
-        guard !windowIDs.isEmpty, !screenBounds.isNull else { return nil }
+    public static func captureComposite(windowIDs: [CGWindowID], screenBounds: CGRect) -> CGImage? {        guard !windowIDs.isEmpty, !screenBounds.isNull else { return nil }
 
         let pointer = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: windowIDs.count)
         defer { pointer.deallocate() }
@@ -212,6 +235,20 @@ public enum Bridging {
         )
     }
 
+    /// 按屏幕区域截取**合成后**的桌面内容（含菜单、面板、状态项等所有可见层）
+    ///
+    /// 与 `captureWindow` 的差异：后者截的是单个窗口自身内容，本方法截的是该区域
+    /// **屏幕上真实呈现的样子**，用于人工取证「某次点击之后画面上到底出现了什么」。
+    /// 同样以 `@_silgen_name` 自管理符号声明屏蔽 SDK 的弃用标注。
+    public static func captureRegion(_ rect: CGRect, onScreenOnly: Bool = true) -> CGImage? {
+        cgWindowListCreateRegionImage(
+            rect,
+            onScreenOnly ? .optionOnScreenOnly : .optionAll,
+            kCGNullWindowID,
+            [.bestResolution]
+        )
+    }
+
     /// CGWindowListCreateImageFromArray 的自管理符号声明
     ///
     /// SDK 自 macOS 14 起将该 API 标记弃用（推荐 ScreenCaptureKit），但符号
@@ -223,6 +260,15 @@ public enum Bridging {
     private static func cgWindowListCreateImage(
         _ screenBounds: CGRect,
         _ windowArray: CFArray,
+        _ imageOption: CGWindowImageOption
+    ) -> CGImage?
+
+    /// CGWindowListCreateImage 的自管理符号声明（理由同 `cgWindowListCreateImage`）
+    @_silgen_name("CGWindowListCreateImage")
+    private static func cgWindowListCreateRegionImage(
+        _ screenBounds: CGRect,
+        _ listOption: CGWindowListOption,
+        _ windowID: CGWindowID,
         _ imageOption: CGWindowImageOption
     ) -> CGImage?
 }

@@ -41,7 +41,7 @@ The neutral breathing placeholder rendered while a MenuBarItem is in its initial
 _Avoid_: LoadingSpinner, GrayBox, PlaceholderIcon
 
 **IslandPanel**:
-The top-anchored, hardware-level pass-through floating viewport hosting NotchRail's presentation layer. The topology is dual-instance: a primary panel permanently guards the primary display, while an external panel independently serves the single external flat display.
+The top-anchored, hardware-level pass-through floating viewport hosting NotchRail's presentation layer. One viewport exists per display, registered by display identifier: the primary display's viewport stays resident, while every other display's viewport loads on demand and unloads once idle. No fixed panel count exists.
 _Avoid_: NotchShelf, FloatingBar, OverlayWindow, SingletonPanel
 
 **StableViewport**:
@@ -65,7 +65,7 @@ The folded idle state of the external panel on a flat external display: fully in
 _Avoid_: HiddenMode, DormantShelf, FloatingShelf
 
 **FocusFollowing**:
-The viewport ownership model where panel ownership is decided solely by screen focus: the primary panel never leaves the notch, and the external panel reveals in place and fades out in place. Replaced the abolished "Viewport Leasing" model.
+The viewport ownership model where each display's viewport belongs to that display alone: the primary display's viewport never leaves the notch, and any external viewport reveals in place and fades out in place. Screen focus only decides which display the user is interacting with; it never relocates or borrows a viewport. Replaced the abolished "Viewport Leasing" model.
 _Avoid_: ViewportLease, ViewportMigration, PanelRelocation
 
 **NativeMenuAnchor**:
