@@ -95,6 +95,18 @@ NotchRail/
 
 任何改动不得破坏以下四项核心工程基石：
 
+### 2.0 规则与实现的时差（读前必看）
+
+本文件的规则分两类：**已落地** 与 **已议定但实现待办**。后者是「决议已立、代码未跟上」的过渡态，**不是文档写错**。读到与规则不符的代码时，**以本文件为准则、以代码为现状**：既不得据此判定规则作废，也不得反过来用代码去改规则（须改规则时走 ADR 取代流程）。
+
+| 规则所在 | 决议出处 | 实现状态 |
+| :--- | :--- | :--- |
+| §2.1「严禁任何跨屏图元借用」「跨屏共享一律默认关闭」 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0014](docs/adr/0014-per-display-item-order.md) | ⏳ 待 v0.0.11（`appAssetVault`、`persistentCache`、三层 `??` 级联回退仍在树中；`customItemOrder` 仍为全局单数组） |
+| §2.2「区域级合成取图」「绝不可改用逐窗截图」 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) | ⏳ 待 v0.0.11（`IconResolver` 取图仍走逐窗 `Bridging.captureWindow`；`Bridging.captureComposite` 已备未接线） |
+| §3.1「多轨物理自律与按屏独立取图」整段 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0014](docs/adr/0014-per-display-item-order.md) | ⏳ 待 v0.0.11（除上述外，`MenuBarAXResolver.cachedEntries` 仍为全局单份不分屏） |
+
+排期见 [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) 的 **v0.0.11** 行；实现卡点（非活动屏原位派发可达性未取证、屏幕稳定标识待定案）见两份 ADR 的「影响 · 未决项」。
+
 ### 2.1 单一真实来源与多屏物理隔离 (Single Source of Truth)
 - 每一台显示器（`displayID`）拥有完全独立的数据空间、几何配置、菜单栏快照、灵动岛视口与交互状态机；
 - **屏幕数量不设上限，一律按 `displayID` 注册与取用**：视口与状态机分别注册于 `IslandWindowCoordinator.panelsByDisplay` / `machinesByDisplay`，严禁出现「主槽位 / 副槽位」这类写死屏数的结构，也严禁任何 `primary*` / `external*` 式的成对字段（否则第三块屏起将静默失效）；
@@ -145,6 +157,7 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
   - **活动菜单栏屏 = 前台窗口所在屏**（**不是**光标所在屏）。该归属可由程序显式移交，双向可逆、可重复。其纯枚举镜像判据是 `kCGWindowName`：**活动屏的项被抹为 `Item-0`、非活动屏的项保留实名 bundle id**，两者逐屏互补——可据此无授权地判定哪块屏是活动屏；
   - **非活动屏不得对外承诺点击可用**：非活动屏原位派发的可达性**尚未取证**（本机外壳无辅助功能权限，事件合成类实验只能走应用内诊断运行器）。在取得证据之前，只允许走「先显式移交活动权、再派发」这一条路径——其两段均已实证，而「非活动屏原位派发」仍属未验证假设，不得写入实现或对外承诺；
   - **身份键与图元键分离**：`bundleIdentifier` 只用于身份识别（AX 配对、偏好键），**绝不可作为跨屏取图索引**。`preferenceKey` 用 `bundleIdentifier` 时须保证逐项唯一——不同状态项共用同一 Bundle ID（例如把时钟 / 电池 / Wi-Fi 等系统项统一写成控制中心宿主 ID）会让偏好排序互相覆盖、张冠李戴；
+  - ⏳ **实现状态**：本段规则已由 ADR 0013 / 0014 议定，**代码尚未落地**（明细与卡点见 §2.0 与 `docs/DEVELOPMENT_PLAN.md` 的 v0.0.11 行）——不得据代码现状反推本段作废。
 
 ### 3.2 全屏空间 (Full-Screen Spaces) 沉浸协同
 - **全屏判定标准**：

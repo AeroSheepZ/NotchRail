@@ -2,7 +2,7 @@
 set -e
 
 VERSION="0.0.10"
-BUILD_NUM="9"
+BUILD_NUM="10"
 APP_NAME="NotchRail"
 BUILD_DIR=".build/release"
 APP_BUNDLE="build/${APP_NAME}.app"
