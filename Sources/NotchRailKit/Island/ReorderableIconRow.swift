@@ -195,7 +195,9 @@ public struct ReorderableIconRow: View {
 }
 
 private struct ItemWidthPreferenceKey: PreferenceKey {
-    static var defaultValue: [UUID: CGFloat] = [:]
+    /// 计算属性而非存储属性：协议只要求只读 `defaultValue`，而可变静态存储属性是全局可变状态
+    /// —— 多个视图树/多次重建之间可能残留上一次的值，也违反「值语义 preference 无共享状态」的前提。
+    static var defaultValue: [UUID: CGFloat] { [:] }
     static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
     }

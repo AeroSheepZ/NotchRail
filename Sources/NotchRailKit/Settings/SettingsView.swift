@@ -36,6 +36,14 @@ private enum SettingsTab: Int, CaseIterable, Identifiable {
 public struct SettingsView: View {
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject var permissionManager = PermissionManager.shared
+    /// 菜单栏图标解析器：**必须观察**，否则应用管理列表的图标永不刷新
+    ///
+    /// `IconResolver` 是 `ObservableObject`，`iconStates` 在每批图标落位后发布。
+    /// 快照通知（`snapshotRevision` 的驱动源）**覆盖不到图标到达时刻**：
+    /// `MenuBarSyncCoordinator.performSync` 先解析溢出项图标、随即发出 `.menuBarSnapshotUpdated`，
+    /// 而「可见项」图标在其**之后**才解析 —— 而本面板列的是**全部项**。
+    /// 故仅靠脉冲时，首帧取到的是尚未落位的 nil ⇒ 列表停在占位符不再重绘（历史回归）。
+    @ObservedObject private var iconResolver = IconResolver.shared
     
     /// 版式尺寸的唯一来源（设置窗口与内容区共用，避免两处各写一份而失配）
     public enum SettingsLayout {
@@ -539,11 +547,15 @@ public struct SettingsView: View {
     }
     
     /// 统一装配应用列表条目（严格只使用原生菜单栏真实截图）
+    ///
+    /// 取图走**实例**属性 `iconResolver`（而非 `IconResolver.shared`）：既让本行的图标
+    /// 与 `@ObservedObject` 建立真实依赖，也让「本视图依赖图标状态」在代码上可见 ——
+    /// 直接调单例会让依赖隐式化，正是图标不刷新那处回归得以潜伏的原因。
     private func resolveAppEntry(item: MenuBarItem, index: Int) -> AppListEntry {
         let bundleID = item.bundleIdentifier ?? "win.\(item.windowID)"
         let title = item.title ?? bundleID
         let key = item.preferenceKey
-        let statusImage: NSImage? = IconResolver.shared.image(for: item)
+        let statusImage: NSImage? = iconResolver.image(for: item)
         
         return AppListEntry(
             uniqueKey: "\(bundleID)_\(item.windowID)",
