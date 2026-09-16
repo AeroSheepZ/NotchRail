@@ -1,6 +1,8 @@
 # 0011. 辅助点击改走会话事件流 + 目标窗口字段路由（修正 ADR 0010 决议 3、6）
 
-> **状态：现行** —— 本 ADR 修正 [ADR 0010](0010-status-item-owner-event-dispatch.md) 的**决议 3**（辅助点击先按 `isOnScreen` 判定可达性）与**决议 6**（未合成项无可用辅助点击通道、返回 `ClickError.unreachableTarget`）。ADR 0010 的决议 1、2、4、5、7、8 继续有效。
+> **状态：部分被取代** —— 本 ADR **决议 4** 的 owner 过滤子句中的「**非本进程**」一项已被 [ADR 0012](0012-secondary-response-accepts-own-menu.md) 取代（本进程的菜单层窗口同样是有效响应）；决议 1、2、3、5、6 与决议 4 的其余部分继续有效。
+>
+> 本 ADR 修正 [ADR 0010](0010-status-item-owner-event-dispatch.md) 的**决议 3**（辅助点击先按 `isOnScreen` 判定可达性）与**决议 6**（未合成项无可用辅助点击通道、返回 `ClickError.unreachableTarget`）。ADR 0010 的决议 1、2、4、5、7、8 继续有效。
 
 ### 背景
 

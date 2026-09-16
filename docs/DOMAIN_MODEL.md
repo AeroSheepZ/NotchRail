@@ -381,7 +381,8 @@ stateDiagram-v2
 | **ADR 0008** | 双面板独立拓扑与聚焦流转架构（部分被 0009 取代） | `IslandWindowCoordinator`, `IconResolver`, `MenuBarSyncCoordinator` |
 | **ADR 0009** | 多屏视口与状态机注册表 | `IslandWindowCoordinator`, `IslandHostingView`, `MenuBarItem.sourcePID` |
 | **ADR 0010** | 状态项窗口 owner 派发与双通道点击策略（决议 3、6 被 0011 取代） | `MenuBarItem.clickTargetPID`, `MenuBarClickKind`, `MenuBarClickEventFactory` |
-| **ADR 0011** | 辅助点击走会话事件流 + 目标窗口字段路由 | `MenuBarItemClicker`, `ClickError.noResponse`, `Bridging.popUpMenuWindowOwners` |
+| **ADR 0011** | 辅助点击走会话事件流 + 目标窗口字段路由（决议 4 的「非本进程」过滤被 0012 取代） | `MenuBarItemClicker`, `ClickError.noResponse`, `Bridging.popUpMenuWindowOwners` |
+| **ADR 0012** | 辅助点击响应判定接受本进程菜单 | `MenuBarItemClicker`, `Bridging.popUpMenuWindowOwners` |
 
-> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代，均详见对应 ADR 顶部的状态横幅。
+> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代；ADR 0011 决议 4 的 owner 过滤子句中「非本进程」一项已被 **ADR 0012** 取代，均详见对应 ADR 顶部的状态横幅。
 

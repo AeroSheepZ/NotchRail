@@ -164,6 +164,7 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
 - **左键单击与辅助点击走不同通道**：左键单击走宿主激活通道（私有字段 + `postToPid`），对未参与合成的溢出项同样有效；辅助点击走**会话事件流 + 目标窗口字段**通道（`CGEvent.post(tap: .cgSessionEventTap)`，事件携带 `MenuBarClickEventFactory` 组装的目标窗口字段），投递前须让自有视口临时穿透，并等待穿透标志实际生效。
   - **辅助点击不以 `isOnScreen` 分流**：该项是否被窗口服务器合成，与本通道成败无关；可达性的唯一前置条件是「目标项持有有效 `windowID`」。窗口服务器把事件携带的目标窗口字段当作**路由覆盖**，因此被刘海挤占、未参与合成的溢出项同样能收到真实右键。此规则曾按相反方向写入并被 [ADR 0011](docs/adr/0011-secondary-click-session-event-routing.md) 取代，理由见该 ADR。
   - **判据是「响应」而非「不可达」**：派发后开启响应观察窗（常量见 `MenuBarItemClicker.SECONDARY_RESPONSE_WINDOW_NANOSECONDS`），窗内出现新的菜单层窗口即视为已响应；否则返回 `.noResponse`，由调用方给出可见反馈（岛内图标 Shake + 触觉），**不得静默**。`noResponse` 的语义是「事件已送达但该项没有辅助点击处理」，**不是**「不可达」。
+    - **判据不得按 owner 排除本进程**：NotchRail 自身状态项的托盘菜单由本进程弹出、同样落在菜单层，把它当噪声排除会让「右键自家被挤占的溢出图标，菜单确实弹出」反过来被判成无响应（岛内 Shake 且灵动岛不收起的自相矛盾反馈）。理由与真机取证见 [ADR 0012](docs/adr/0012-secondary-response-accepts-own-menu.md)。
   - **严禁改发左键冒充右键**：左键在部分应用是「立即动作」而非菜单（静音 / 暂停 / 开关），冒充与用户意图相悖（理由见 [ADR 0010](docs/adr/0010-status-item-owner-event-dispatch.md)）。
 - **事件字段唯一构造器**：点击事件的字段组装（私有字段、按键号、`clickState`）一律经 `MenuBarClickEventFactory` 取用，生产路径与诊断路径不得各自拼装 —— 两侧字段漂移会让诊断路径静默掩盖生产缺陷。
 - **不提供左键双击**：`MenuBarClickKind` 只有 `.single` 与 `.secondary` 两种。双击是 `.leftMouseDown` 的 `clickCount == 2`，与辅助点击（触控板双指 = 鼠标右键）正交；一旦按 `clickCount >= 2` 分流，双击间隔内对同一图标的第二次单击会被误吞，表现为「单击时灵时不灵」。

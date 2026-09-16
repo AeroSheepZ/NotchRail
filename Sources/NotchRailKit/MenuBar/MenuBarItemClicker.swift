@@ -70,6 +70,11 @@ public enum MenuBarClickKind: String, Sendable {
 /// 否则返回 `.failure(.noResponse)`，由岛内图标触发横向 Shake + 触觉反馈。
 /// 已知取舍：把辅助点击实现为**无窗口的即时动作**（如开关类）的应用会被判成无响应而抖动，
 /// 这是「不去猜测应用内部行为」的代价。
+///
+/// **本进程的菜单层窗口同样是有效响应**：NotchRail 自身状态项（`StatusItemManager` 的 `NSMenu`）
+/// 的菜单由本进程弹出，同样落在 `kCGPopUpMenuWindowLevel`。判据**只排除菜单栏宿主**，
+/// 绝不排除本进程 —— 否则「右键自家被挤占的溢出图标，菜单确实弹出了」会被误报为无响应，
+/// 表现为岛内 Shake 且灵动岛不收起的交互自相矛盾（详见 `awaitMenuResponse(baseline:hostPID:)`）。
 public actor MenuBarItemClicker {
     public static let shared = MenuBarItemClicker()
 
@@ -164,16 +169,28 @@ public actor MenuBarItemClicker {
         return responded ? .success(()) : .failure(.noResponse)
     }
 
-    /// 在响应观察窗内轮询「是否新出现目标应用的菜单层窗口」
+    /// 在响应观察窗内轮询「是否新出现菜单层窗口」
     ///
-    /// 排除两类必然出现的噪声：菜单栏宿主自身新建的状态项窗口（层不同，已由 `popUpMenuWindowOwners`
-    /// 的层级过滤剔除）与 NotchRail 自己的窗口。
+    /// 判据只看**物理层事实**：`kCGPopUpMenuWindowLevel` 上出现了投递前不存在的窗口。
+    /// 菜单栏项自身的布局扰动（宿主每次点击都会因状态项进出新建窗口）落在 `kCGStatusWindowLevel`，
+    /// 自有灵动岛视口落在 `IslandPanel.level`（`.screenSaver`），二者都不在菜单层，
+    /// 已由 `popUpMenuWindowOwners` 的层级过滤一并剔除。
+    ///
+    /// **只排除菜单栏宿主，不排除本进程**（2026-09-16 修正，见 ADR 0012）：
+    /// 本进程（NotchRail）自身状态项的菜单本就由本进程弹出、同样落在菜单层。
+    /// 旧实现把「NotchRail 自己的窗口」整体当作噪声排除，恰好把**自家状态项唯一可能的响应信号**
+    /// 也排除了，导致右键自家被挤占的溢出图标时「菜单已弹出却判成无响应」——
+    /// 用户看到的是岛内图标 Shake 且灵动岛不收起的自相矛盾反馈。
+    ///
+    /// 基线差分的可靠性已真机取证（本机 macOS 26，同一 `NSStatusItem` 菜单连续弹出 3 次）：
+    /// 每次弹出都产生**新的 `windowID`**，不存在「复用旧窗口导致漏判」；且菜单关闭后其窗口
+    /// 仍留在 `CGWindowListCopyWindowInfo(.optionAll)` 结果中，故投递前抓取的基线天然包含历史菜单窗口。
     private static func awaitMenuResponse(baseline: [CGWindowID: pid_t], hostPID: pid_t) async -> Bool {
         var waited: UInt64 = 0
         while true {
             let current = Bridging.popUpMenuWindowOwners()
             let appeared = current.contains { windowID, ownerPID in
-                baseline[windowID] == nil && ownerPID != hostPID && ownerPID != getpid()
+                baseline[windowID] == nil && ownerPID != hostPID
             }
             if appeared { return true }
             if waited >= SECONDARY_RESPONSE_WINDOW_NANOSECONDS { return false }
