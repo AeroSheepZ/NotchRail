@@ -136,11 +136,13 @@ public struct IslandRootView: View {
             .onHover { isHovered in
                 handleHover(isHovered, overflowCount: overflowItems.count, isSyncing: isSyncing)
             }
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    handleTap(overflowCount: overflowItems.count, isSyncing: isSyncing)
-                }
-            )
+            // 必须用普通手势（`.onTapGesture`）而非 `simultaneousGesture`：
+            // 后者会与子视图的 `Button`（图标 / 设置齿轮）**同时**触发，点图标会连带把岛收起；
+            // 普通手势遵循 SwiftUI 的「子视图优先」仲裁 —— 命中图标时由 `Button` 消费，
+            // 只有落在岛内空白处（底座、分隔线旁、空状态区）才归本手势，恰好就是「点胶囊」的语义。
+            .onTapGesture {
+                handleTap(overflowCount: overflowItems.count, isSyncing: isSyncing)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -149,9 +151,8 @@ public struct IslandRootView: View {
     
     private func handleHover(_ isHovered: Bool, overflowCount: Int, isSyncing: Bool) {
         guard !isSyncing else { return }
-        let prefs = preferenceStore.preferences
-        // 允许 hover 与 hoverAndClick 模式触发悬停防抖
-        guard prefs.triggerMode == .hover || prefs.triggerMode == .hoverAndClick else { return }
+        // 悬停门禁的唯一判据（三档语义定义见 `TriggerMode.respondsToHover`）
+        guard preferenceStore.preferences.triggerMode.respondsToHover else { return }
         
         if isHovered {
             stateMachine.handleMouseEnter(overflowCount: overflowCount)
@@ -160,18 +161,16 @@ public struct IslandRootView: View {
         }
     }
     
+    /// 左键点击灵动岛本体（不含图标 / 设置齿轮，那两者由各自的 `Button` 消费）
+    ///
+    /// 语义与模式门禁**全部下沉到 `IslandStateMachine.handleCapsuleTap`**：
+    /// 本视图不再自读 `triggerMode`，避免同一枚举出现第二处口径（ADR 0016）。
     private func handleTap(overflowCount: Int, isSyncing: Bool) {
         guard !isSyncing else { return }
-        let prefs = preferenceStore.preferences
-        // 允许 click 与 hoverAndClick 模式触发紧凑胶囊点击即时展开（展开态由外部点击或图标点击独立处理，避免劫持图标手势）
-        guard prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick else { return }
-        
-        if !stateMachine.currentState.isExpanded {
-            stateMachine.triggerExpand(overflowCount: overflowCount)
-        }
+        stateMachine.handleCapsuleTap(overflowCount: overflowCount)
     }
     
-    /// 左键单击：当场派发，随后按偏好原子收起
+    /// 左键单击：当场派发，随后收起
     ///
     /// 全程**不引入任何双击判定窗口**：用户对菜单栏图标的诉求只有「单击触发」与
     /// 「辅助点击（触控板双指 / 鼠标右键）触发原生菜单」两种，不存在双击语义。
@@ -181,7 +180,7 @@ public struct IslandRootView: View {
         let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem, kind: .single)
         switch clickResult {
         case .success:
-            collapseIfEnabled()
+            collapseAfterDispatch()
             return true
         case .failure:
             return false
@@ -193,18 +192,19 @@ public struct IslandRootView: View {
         let clickResult = await MenuBarItemClicker.shared.performClick(for: targetItem, kind: .secondary)
         switch clickResult {
         case .success:
-            collapseIfEnabled()
+            collapseAfterDispatch()
             return true
         case .failure:
             return false
         }
     }
 
-    /// 按偏好立即原子收起
+    /// 派发成功后立即原子收起（**恒定执行，不可由偏好关闭**，ADR 0015）
     ///
     /// 收起是**必需**的：灵动岛视口层级高于应用菜单窗口，若保持展开会遮挡刚弹出的原生菜单。
-    private func collapseIfEnabled() {
-        guard preferenceStore.preferences.autoCollapseOnClick else { return }
+    /// 历史上这项收起曾是一个用户可关闭的偏好项，但关掉后既违反上述平台事实、也让用户误以为
+    /// 「灵动岛保持展开」而实为「原生菜单被压住」。该偏好项已随 ADR 0015 删除。
+    private func collapseAfterDispatch() {
         stateMachine.triggerCollapse()
     }
 }

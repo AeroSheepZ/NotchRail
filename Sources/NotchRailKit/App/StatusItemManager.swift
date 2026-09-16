@@ -73,15 +73,29 @@ public final class StatusItemManager: NSObject, NSMenuDelegate, ObservableObject
         IslandWindowCoordinator.shared.stateMachine(for: ScreenManager.shared.currentGeometry.displayID)
     }
     
+    /// 当前焦点屏是否因「无遮挡图标时自动隐藏紧凑胶囊」而处于完全静默态
+    ///
+    /// 该档语义为「0 溢出即完全不出现」（ADR 0015 决议 3），托盘菜单这条显式唤出路径同样必须让位，
+    /// 否则「任何形式都无法唤出」不成立。
+    private var isFocusedScreenSilencedByNoOverflow: Bool {
+        let displayID = ScreenManager.shared.currentGeometry.displayID
+        let overflowCount = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: displayID)?.overflowCount ?? 0
+        return PreferenceStore.shared.preferences.hideWhenNoOverflow && overflowCount == 0
+    }
+    
     public func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         
         let isExpanded = focusedStateMachine?.currentState.isExpanded ?? false
         let toggleTitle = isExpanded ? "收起灵动岛" : "展开灵动岛"
         
-        // 1. 灵动岛开关
+        // 1. 灵动岛开关（静默态下禁掉「展开」方向，并说明原因）
         let toggleItem = NSMenuItem(title: toggleTitle, action: #selector(handleToggleIsland), keyEquivalent: "")
         toggleItem.target = self
+        if !isExpanded && isFocusedScreenSilencedByNoOverflow {
+            toggleItem.isEnabled = false
+            toggleItem.toolTip = "已开启「无遮挡图标时自动隐藏紧凑胶囊」，当前屏无溢出期间灵动岛完全静默"
+        }
         menu.addItem(toggleItem)
         
         // 2. 重新扫描

@@ -164,6 +164,9 @@ public final class IslandWindowCoordinator: ObservableObject {
     }
 
     /// 该屏幕是否允许承载灵动岛（主屏恒允许；其余屏由多显示器策略决定）
+    ///
+    /// 本函数是多显示器策略**唯一**的「允许哪些屏承载灵动岛」判据：只有
+    /// `.followFocusedScreen` 放行非主屏，`.mainScreenOnly` 一律只留主屏基准屏（ADR 0015）。
     private func allowsPanel(on geom: NotchGeometry, prefs: UserPreferences) -> Bool {
         if geom.displayID == primaryDisplayID {
             return true

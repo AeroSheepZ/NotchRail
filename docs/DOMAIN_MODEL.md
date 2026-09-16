@@ -85,7 +85,6 @@ classDiagram
 
     class UserPreferences {
         +TriggerMode triggerMode
-        +Bool autoCollapseOnClick
         +Bool enableHapticFeedback
         +Bool hideWhenNoOverflow
         +ExternalDisplayMode externalDisplayMode
@@ -196,27 +195,25 @@ public struct CapturedIcon: Sendable {
 ```swift
 public enum TriggerMode: String, Codable, CaseIterable, Sendable {
     case hover          // 鼠标悬停防抖触发
-    case click          // 仅点击胶囊展开/收起
+    case click          // 仅点击胶囊展开（收起由点击岛外区域或点击图标后的恒定收起承担）
     case hoverAndClick  // 悬停或点击均可触发
 }
 
 public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
     case followFocusedScreen // 跟随当前聚焦屏幕
     case mainScreenOnly      // 仅在主显示器（刘海屏）显示
-    case disabled            // 外接显示器完全禁用
 }
 
 public struct UserPreferences: Codable, Equatable, Sendable {
     public var triggerMode: TriggerMode                 // 默认 .hoverAndClick
-    public var autoCollapseOnClick: Bool                // 默认 true
     public var enableHapticFeedback: Bool               // 默认 true
-    public var hideWhenNoOverflow: Bool                 // 默认 false
-    public var externalDisplayMode: ExternalDisplayMode // 默认 .followFocusedScreen
+    public var hideWhenNoOverflow: Bool                 // 默认 false；为 true 时语义见 CONTEXT.md 的 SilencedByNoOverflow
+    public var externalDisplayMode: ExternalDisplayMode // 默认 .followFocusedScreen；历史编码值在解码时显式迁移
     public var showMenuBarIcon: Bool                    // 默认 true
     public var hoverExpandDelayMs: Double               // 默认取 IslandTheme.Timing.HOVER_EXPAND_DELAY
     public var collapseDelayMs: Double                  // 默认取 IslandTheme.Timing.COLLAPSE_DELAY
-    public var customItemOrder: [String]                // 默认 []
-    public var launchAtLogin: Bool                      // 默认 false
+    public var customItemOrder: [String]                // 默认 []；作用域见 CONTEXT.md 的 ItemOrderScope（默认按屏独立）
+    public var launchAtLogin: Bool                      // 默认 false；系统侧注册状态的镜像
     public var skipScreenCapturePrompt: Bool            // 默认 false
 }
 ```
@@ -374,7 +371,7 @@ stateDiagram-v2
 | **ADR 0001** | AX 空间几何反查映射 | `MenuBarAXResolver`, `AXEntry` |
 | **ADR 0002** | 外接平直屏物理零刘海与动态菜单碰撞 | `NotchGeometry`, `OverflowCalculator`, `IslandPanel` |
 | **ADR 0003** | 纯物理几何判定并废弃 isOnScreen | `OverflowCalculator`, `MenuBarItem` |
-| **ADR 0004** | 零降级真实位图像素级镜像 | `CapturedIcon`, `IconResolver` |
+| **ADR 0004** | 零降级真实位图像素级镜像（决议 1 的逐窗取图路径被 0013 取代） | `CapturedIcon`, `IconResolver` |
 | **ADR 0005** | 原生物理坐标合成事件精准分发（决议被 0010 取代） | `MenuBarItem`, `CGEvent` |
 | **ADR 0006** | 稳固常驻视口与硬件级穿透管理 | `IslandWindowCoordinator`, `MouseMonitor` |
 | **ADR 0007** | 全屏空间隐退与顶边缘极窄热区唤醒 | `FullScreenDetector`, `NotchGeometry` |
@@ -383,6 +380,10 @@ stateDiagram-v2
 | **ADR 0010** | 状态项窗口 owner 派发与双通道点击策略（决议 3、6 被 0011 取代） | `MenuBarItem.clickTargetPID`, `MenuBarClickKind`, `MenuBarClickEventFactory` |
 | **ADR 0011** | 辅助点击走会话事件流 + 目标窗口字段路由（决议 4 的「非本进程」过滤被 0012 取代） | `MenuBarItemClicker`, `ClickError.noResponse`, `Bridging.popUpMenuWindowOwners` |
 | **ADR 0012** | 辅助点击响应判定接受本进程菜单 | `MenuBarItemClicker`, `Bridging.popUpMenuWindowOwners` |
+| **ADR 0013** | 按屏独立取图：废除跨屏图元共享层（取代 0004 决议 1 的取图路径） | `IconResolver`, `MenuBarItem.iconCacheKey`, `MenuBarItemWindowSet`, `ActiveMenuBarDisplay`, `PerDisplayIconCapture` |
+| **ADR 0014** | 排序偏好默认按屏独立、多屏共用须显式选择 | `UserPreferences.customItemOrder`, `CustomItemOrder`, `ItemOrderScope` |
+| **ADR 0015** | 设置项与实现对齐：删除名不副实的选项（决议 4 被 0016 取代） | `UserPreferences`, `ExternalDisplayMode`, `SilencedByNoOverflow` |
+| **ADR 0016** | 胶囊点击恒为展开/收起切换，模式门禁收敛为唯一定义 | `TriggerMode.respondsToHover`, `TriggerMode.respondsToCapsuleTap`, `IslandStateMachine.handleCapsuleTap` |
 
-> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代；ADR 0011 决议 4 的 owner 过滤子句中「非本进程」一项已被 **ADR 0012** 取代，均详见对应 ADR 顶部的状态横幅。
+> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代；ADR 0011 决议 4 的 owner 过滤子句中「非本进程」一项已被 **ADR 0012** 取代；ADR 0004 决议 1 的「逐窗截图」取图路径已被 **ADR 0013** 取代（其零降级原则决议 2、3、4 继续有效）；ADR 0015 决议 4 的「胶囊点击仅展开」已被 **ADR 0016** 取代（决议 1、2、3、5 继续有效），均详见对应 ADR 顶部的状态横幅。
 

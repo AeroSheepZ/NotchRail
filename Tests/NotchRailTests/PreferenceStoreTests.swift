@@ -12,7 +12,6 @@ final class PreferenceStoreTests: XCTestCase {
         let store = PreferenceStore(userDefaults: defaults)
         XCTAssertEqual(store.preferences.triggerMode, .hoverAndClick)
         XCTAssertEqual(store.preferences.externalDisplayMode, .followFocusedScreen)
-        XCTAssertTrue(store.preferences.autoCollapseOnClick)
         XCTAssertTrue(store.preferences.enableHapticFeedback)
         XCTAssertFalse(store.preferences.hideWhenNoOverflow)
         XCTAssertTrue(store.preferences.showMenuBarIcon)
@@ -53,7 +52,6 @@ final class PreferenceStoreTests: XCTestCase {
         // 验证自动补充的安全默认值
         XCTAssertEqual(decoded.triggerMode, .hoverAndClick)
         XCTAssertEqual(decoded.externalDisplayMode, .followFocusedScreen)
-        XCTAssertTrue(decoded.autoCollapseOnClick)
         XCTAssertTrue(decoded.enableHapticFeedback)
         XCTAssertFalse(decoded.hideWhenNoOverflow)
         XCTAssertTrue(decoded.showMenuBarIcon)
@@ -67,7 +65,7 @@ final class PreferenceStoreTests: XCTestCase {
         let store = PreferenceStore(userDefaults: defaults)
         store.update { prefs in
             prefs.triggerMode = .click
-            prefs.externalDisplayMode = .disabled
+            prefs.externalDisplayMode = .mainScreenOnly
             prefs.hoverExpandDelayMs = 250.0
         }
         
@@ -80,6 +78,25 @@ final class PreferenceStoreTests: XCTestCase {
         XCTAssertEqual(store.preferences.externalDisplayMode, .followFocusedScreen)
         XCTAssertEqual(store.preferences.hoverExpandDelayMs, IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0)
         XCTAssertEqual(store.preferences.collapseDelayMs, IslandTheme.Timing.COLLAPSE_DELAY * 1000.0)
+    }
+    
+    /// 历史第三档（原始编码 disabled）必须**显式迁移**为 .mainScreenOnly
+    ///
+    /// 该档已随 ADR 0015 删除。若只靠 `ExternalDisplayMode(rawValue:)` 兜底，查不到会静默落回
+    /// `.followFocusedScreen` —— 那等于把曾选「仅主屏」的用户悄悄切换到多屏独立模式（语义漂移）。
+    /// 同时验证：历史 JSON 中已删除的偏好键必须被无害忽略，不得导致解码失败。
+    func testLegacyThirdCaseMigratesToMainScreenOnly() throws {
+        let legacyJSON = """
+        {
+            "externalDisplayMode": "disabled",
+            "autoCollapseOnClick": false,
+            "triggerMode": "hover"
+        }
+        """.data(using: .utf8)!
+        
+        let decoded = try JSONDecoder().decode(UserPreferences.self, from: legacyJSON)
+        XCTAssertEqual(decoded.externalDisplayMode, .mainScreenOnly)
+        XCTAssertEqual(decoded.triggerMode, .hover)
     }
     
     func testCustomItemOrderManagement() {

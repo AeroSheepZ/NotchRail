@@ -265,9 +265,10 @@ public final class MouseMonitor: ObservableObject {
                             }
                         }
                     } else {
-                        if prefs.triggerMode != .click {
-                            sm.handleMouseLeave()
-                        }
+                        // 模式门禁不在本处判定：`.click` 下「移出不自动收起」由
+                        // `IslandStateMachine.handleMouseLeave` 自行早退（唯一裁决入口，
+                        // 避免同一枚举在多处各写一遍口径，ADR 0016）
+                        sm.handleMouseLeave()
                     }
                 }
                 return
@@ -342,9 +343,8 @@ public final class MouseMonitor: ObservableObject {
                         }
                     }
                 } else {
-                    if prefs.triggerMode != .click {
-                        sm.handleMouseLeave()
-                    }
+                    // 同分流 A：模式门禁唯一归属 `IslandStateMachine.handleMouseLeave`
+                    sm.handleMouseLeave()
                 }
             }
             return
@@ -373,8 +373,8 @@ public final class MouseMonitor: ObservableObject {
         self.lastMouseTimestamp = now
         
         // 5. 停留意图防抖门禁（对齐 triggerMode 与 hoverExpandDuration）
-        // 仅在 hover 或 hoverAndClick 模式下响应悬停防抖；click 模式留给 handleClick
-        let allowsHoverTrigger = (prefs.triggerMode == .hover || prefs.triggerMode == .hoverAndClick)
+        // 悬停门禁唯一判据，详见 `TriggerMode.respondsToHover`；「仅点击」档留给 handleClick
+        let allowsHoverTrigger = prefs.triggerMode.respondsToHover
         let dwellDuration = max(0.08, prefs.hoverExpandDuration)
         
         if isInTargetHotZone && !isHighVelocityPass && allowsHoverTrigger {
@@ -422,9 +422,9 @@ public final class MouseMonitor: ObservableObject {
         // 1. 若当前灵动岛处于展开态，委托视口管理器判定并驱动收起外部点击 (Ticket #48 & #53)
         IslandWindowCoordinator.shared.handleOutsideClickIfNeeded(at: location)
         
-        // 2. 对齐 triggerMode：若配置了 click 或 hoverAndClick 模式，且点击在外接平直屏顶部中央热区，即时展开
+        // 2. 对齐 triggerMode：该档响应点击时，落在外接平直屏顶部中央热区即即时展开
         let prefs = PreferenceStore.shared.preferences
-        if (prefs.triggerMode == .click || prefs.triggerMode == .hoverAndClick) {
+        if prefs.triggerMode.respondsToCapsuleTap {
             let screenMatch = ScreenManager.shared.allGeometries.first(where: {
                 $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
             })

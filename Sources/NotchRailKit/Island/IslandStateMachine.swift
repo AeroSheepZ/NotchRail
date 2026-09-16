@@ -91,8 +91,8 @@ public final class IslandStateMachine: ObservableObject {
         }
         
         let triggerMode = PreferenceStore.shared.preferences.triggerMode
-        // 若为「仅点击」模式，悬停不触发展开防抖计时
-        guard triggerMode != .click else { return }
+        // 「仅点击」档不响应悬停：不触发展开防抖计时
+        guard triggerMode.respondsToHover else { return }
         
         switch currentState {
         case .compact:
@@ -125,10 +125,8 @@ public final class IslandStateMachine: ObservableObject {
             currentState = .compact
             
         case .extended:
-            // 若为「仅点击」模式，鼠标离开不自动收起，保持常开直至点击收起或点击图标
-            if triggerMode == .click {
-                return
-            }
+            // 「仅点击」档不响应悬停 ⇒ 悬停移出不驱动收起，保持常开直至点击收起或点击图标
+            guard triggerMode.respondsToHover else { return }
             // 启动收起宽限期计时器
             currentState = .collapsing
             collapseTimer = Timer.scheduledTimer(withTimeInterval: collapseDelay, repeats: false) { [weak self] _ in
@@ -140,6 +138,21 @@ public final class IslandStateMachine: ObservableObject {
         case .compact, .collapsing, .fullScreenHidden:
             break
         }
+    }
+    
+    /// 紧凑胶囊被左键点击 —— 本屏点击语义的**唯一裁决入口**
+    ///
+    /// **三档模式在此处一一对应设置面板文案**（ADR 0016）：
+    /// - `.click` / `.hoverAndClick`：**切换**展开与收起（点第二次即收起）；
+    /// - `.hover`：完全不参与。该档语义是「**仅**鼠标悬停」，若此处也响应点击，
+    ///   `.hover` 与 `.hoverAndClick` 会退化成两个可观察行为完全相同的选项 ——
+    ///   即 ADR 0015 决议 1 刚刚删掉的那类「假选择」。
+    ///
+    /// 调用方（视图层与鼠标监听）**不得**再各自读一次 `triggerMode` 做门禁，
+    /// 否则又会出现「同一枚举、多处口径」的漂移（历史缺陷见 ADR 0015 背景第 1 条）。
+    public func handleCapsuleTap(overflowCount: Int = 1) {
+        guard PreferenceStore.shared.preferences.triggerMode.respondsToCapsuleTap else { return }
+        toggleExpandCollapse(overflowCount: overflowCount)
     }
     
     /// 切换展开/收起状态（用于胶囊点击或外部快捷调用）

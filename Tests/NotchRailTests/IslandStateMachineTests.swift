@@ -79,6 +79,47 @@ final class IslandStateMachineTests: XCTestCase {
         PreferenceStore.shared.update { $0.triggerMode = .hover }
     }
     
+    /// 胶囊点击的三档语义（ADR 0016）：
+    /// 点击档必为**切换**（能收），悬停档**不参与**点击（否则与默认档行为等价，成为假选择）
+    func testCapsuleTapRespectsTriggerMode() {
+        // 1. 仅点击：展开 → 收起（历史缺陷：只展开不收起，与设置文案「展开或收起」不符）
+        PreferenceStore.shared.update { $0.triggerMode = .click }
+        let clickOnly = IslandStateMachine()
+        clickOnly.handleCapsuleTap(overflowCount: 3)
+        XCTAssertEqual(clickOnly.currentState, .extended)
+        clickOnly.handleCapsuleTap(overflowCount: 3)
+        XCTAssertEqual(clickOnly.currentState, .compact)
+        
+        // 2. 悬停或点击：点击同样切换
+        PreferenceStore.shared.update { $0.triggerMode = .hoverAndClick }
+        let both = IslandStateMachine()
+        both.handleCapsuleTap(overflowCount: 3)
+        XCTAssertEqual(both.currentState, .extended)
+        both.handleCapsuleTap(overflowCount: 3)
+        XCTAssertEqual(both.currentState, .compact)
+        
+        // 3. 仅悬停：点击完全不参与
+        PreferenceStore.shared.update { $0.triggerMode = .hover }
+        let hoverOnly = IslandStateMachine()
+        hoverOnly.handleCapsuleTap(overflowCount: 3)
+        XCTAssertEqual(hoverOnly.currentState, .compact)
+        
+        // 恢复默认档
+        PreferenceStore.shared.update { $0.triggerMode = .hoverAndClick }
+    }
+    
+    /// 三档语义谓词两两互异，杜绝「两个选项行为相同」的假选择
+    func testTriggerModePredicatesAreDistinct() {
+        XCTAssertTrue(TriggerMode.hover.respondsToHover)
+        XCTAssertFalse(TriggerMode.hover.respondsToCapsuleTap)
+        
+        XCTAssertFalse(TriggerMode.click.respondsToHover)
+        XCTAssertTrue(TriggerMode.click.respondsToCapsuleTap)
+        
+        XCTAssertTrue(TriggerMode.hoverAndClick.respondsToHover)
+        XCTAssertTrue(TriggerMode.hoverAndClick.respondsToCapsuleTap)
+    }
+    
     func testFullScreenHiddenTransitions() {
         let sm = IslandStateMachine()
         XCTAssertEqual(sm.currentState, .compact)

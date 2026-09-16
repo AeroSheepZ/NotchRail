@@ -24,9 +24,13 @@ public final class ScreenManager: ObservableObject {
     }
 
     /// 根据多显示器偏好策略计算当前应生效的目标屏幕几何配置
+    ///
+    /// 两档穷举（ADR 0015）：`.followFocusedScreen` 跟随焦点屏，`.mainScreenOnly` 恒取主屏基准屏。
+    /// 历史第三档已删除 —— 它在本函数里被并进 `.followFocusedScreen` 分支，却在
+    /// `IslandWindowCoordinator.allowsPanel` 里被当作「不允许非主屏」，同一枚举两处口径相反。
     public func effectiveGeometry(for mode: ExternalDisplayMode) -> NotchGeometry {
         switch mode {
-        case .followFocusedScreen, .disabled:
+        case .followFocusedScreen:
             return currentGeometry
         case .mainScreenOnly:
             return primaryGeometry

@@ -702,10 +702,15 @@ public enum SpikeRunner {
         PreferenceStore.shared.update { $0.triggerMode = .click }
         clickSM.handleMouseEnter(overflowCount: 5)
         check(clickSM.currentState == .compact, "Test 12: Click-only mode should not expand on hover")
-        clickSM.toggleExpandCollapse(overflowCount: 5)
-        check(clickSM.currentState == .extended, "Test 12: toggleExpandCollapse should expand")
-        clickSM.toggleExpandCollapse()
-        check(clickSM.currentState == .compact, "Test 12: toggleExpandCollapse should collapse")
+        // 走生产入口 handleCapsuleTap（而非裸 toggleExpandCollapse），确保模式门禁真被覆盖
+        clickSM.handleCapsuleTap(overflowCount: 5)
+        check(clickSM.currentState == .extended, "Test 12: capsule tap should expand")
+        clickSM.handleCapsuleTap(overflowCount: 5)
+        check(clickSM.currentState == .compact, "Test 12: capsule tap should collapse (toggle)")
+        // 「仅悬停」档不得响应点击，否则与默认档退化为同一行为
+        PreferenceStore.shared.update { $0.triggerMode = .hover }
+        clickSM.handleCapsuleTap(overflowCount: 5)
+        check(clickSM.currentState == .compact, "Test 12: hover-only mode must ignore capsule tap")
         PreferenceStore.shared.update { $0.triggerMode = .hoverAndClick }
         print("   ✅ Case 12 通过: IslandStateMachine 多模式触发 (Click-Only & Hover) 隔离验证通过")
         
@@ -713,7 +718,6 @@ public enum SpikeRunner {
         testStore.resetToDefaults()
         check(testStore.preferences.triggerMode == .hoverAndClick, "Test 13: Reset triggerMode mismatch")
         check(testStore.preferences.externalDisplayMode == .followFocusedScreen, "Test 13: Reset externalDisplayMode mismatch")
-        check(testStore.preferences.autoCollapseOnClick == true, "Test 13: Reset autoCollapseOnClick mismatch")
         check(testStore.preferences.enableHapticFeedback == true, "Test 13: Reset enableHapticFeedback mismatch")
         check(testStore.preferences.showMenuBarIcon == true, "Test 13: Reset showMenuBarIcon mismatch")
         print("   ✅ Case 13 通过: PreferenceStore resetToDefaults() 原子重置全部 0.0.3 偏好项通过")

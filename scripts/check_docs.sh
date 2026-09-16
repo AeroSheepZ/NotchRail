@@ -57,6 +57,8 @@ DELETED_SYMBOLS=(
   'latestSnapshot'
   'allDiscoveredItems'
   'discoveredItemsMap'
+  'autoCollapseOnClick'
+  'case disabled'
 )
 hit=0
 for sym in "${DELETED_SYMBOLS[@]}"; do

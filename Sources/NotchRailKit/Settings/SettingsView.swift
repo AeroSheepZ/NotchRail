@@ -53,6 +53,8 @@ public struct SettingsView: View {
     @State private var isRefreshingPermissions: Bool = false
     @State private var isManualScanning: Bool = false
     @State private var selectedDisplayID: CGDirectDisplayID? = nil
+    /// 开机自启动的如实回报（注册失败 / 待批准 / 与系统侧不一致时显示，正常态为 nil）
+    @State private var launchAtLoginMessage: String? = nil
     /// 当前可用屏幕拓扑（由 `ScreenManager.$allGeometries` 单向同步，作为本视图唯一的屏幕清单来源）
     @State private var availableGeometries: [NotchGeometry] = []
     /// 本面板所选屏幕的快照刷新脉冲（仅在**该屏**快照更新时自增，杜绝任一块屏广播导致整面板重算）
@@ -79,10 +81,8 @@ public struct SettingsView: View {
         }
         .onAppear {
             availableGeometries = ScreenManager.shared.allGeometries
-            let actualLaunchAtLogin = LaunchAtLoginManager.isEnabled
-            if preferenceStore.preferences.launchAtLogin != actualLaunchAtLogin {
-                preferenceStore.update { $0.launchAtLogin = actualLaunchAtLogin }
-            }
+            launchAtLoginMessage = nil
+            syncLaunchAtLoginMirror()
             if selectedDisplayID == nil {
                 let currentScreen = NSApp.keyWindow?.screen ?? NSScreen.main
                 let targetDisplayID = currentScreen?.displayID ?? ScreenManager.shared.primaryGeometry.displayID
@@ -98,6 +98,40 @@ public struct SettingsView: View {
             guard let snapshot = notif.object as? MenuBarSnapshot,
                   snapshot.displayID == activeDisplayID else { return }
             snapshotRevision &+= 1
+        }
+    }
+
+    // MARK: - 开机自启动（偏好只是系统侧注册状态的镜像）
+
+    /// 与系统侧对账：一律以系统真实状态回写偏好
+    ///
+    /// 若偏好为「开」而系统侧为「关」，**如实说明原因**而非静默掰回 ——
+    /// 历史实现此处直接 `update` 回写、不给任何提示，用户只会看到开关自己弹回去。
+    private func syncLaunchAtLoginMirror() {
+        let actual = LaunchAtLoginManager.isEnabled
+        guard preferenceStore.preferences.launchAtLogin != actual else { return }
+        if preferenceStore.preferences.launchAtLogin && !actual {
+            launchAtLoginMessage = "系统侧未生效（可能已在「系统设置 → 通用 → 登录项」中被关闭），已按系统的真实状态回写。"
+        }
+        preferenceStore.update { $0.launchAtLogin = actual }
+    }
+
+    /// 应用开机自启动开关：先按结果回写偏好，再据结果给出**可见**说明
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        let outcome = LaunchAtLoginManager.setEnabled(enabled)
+        let actual = LaunchAtLoginManager.isEnabled
+        // 偏好恒与系统侧真值一致，杜绝「开关是开的、系统里没注册」
+        preferenceStore.update { $0.launchAtLogin = actual }
+
+        switch outcome {
+        case .succeeded:
+            launchAtLoginMessage = actual == enabled ? nil : "系统侧未按预期变更，请检查「系统设置 → 通用 → 登录项」。"
+        case .requiresApproval:
+            launchAtLoginMessage = "已在系统中登记，但需在「系统设置 → 通用 → 登录项」中允许 NotchRail 后方能生效。"
+        case .unsupportedSystem:
+            launchAtLoginMessage = "当前系统版本不支持自动启动注册（需 macOS 13 及以上）。"
+        case .failed(let reason):
+            launchAtLoginMessage = "注册失败：\(reason)"
         }
     }
 
@@ -141,28 +175,27 @@ public struct SettingsView: View {
                 
                 switch preferenceStore.preferences.triggerMode {
                 case .hover:
-                    Text("鼠标停留在顶部刘海或顶边缘热区时自动触发展开。")
+                    Text("鼠标停留在顶部刘海或热区时自动展开，移出后自动收起。该档不响应点击 —— 点击灵动岛不会有任何反应（需要点击请选「悬停或点击」）。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .click:
-                    Text("鼠标划过或停留均不展开，仅在显式点击顶部胶囊时展开或收起。")
+                    Text("鼠标划过或停留均不展开。点击灵动岛即切换展开与收起，点击灵动岛以外区域亦收起。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .hoverAndClick:
-                    Text("既支持鼠标悬停自动展开，亦可随时点击胶囊立即切换展开或收起。")
+                    Text("既支持鼠标悬停自动展开，亦可随时点击灵动岛切换展开与收起。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                
+                Text("外接平直屏在折叠常态下完全隐形，故「点击」在该屏对应的是顶部中央热区（水平居中、紧贴屏幕顶边），而非可见胶囊。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             } header: {
                 Text("灵动岛唤醒与展开")
             }
             
             Section {
-                Toggle("点击图标后自动收起灵动岛", isOn: Binding(
-                    get: { preferenceStore.preferences.autoCollapseOnClick },
-                    set: { val in preferenceStore.update { $0.autoCollapseOnClick = val } }
-                ))
-                
                 Toggle("交互触觉振动反馈", isOn: Binding(
                     get: { preferenceStore.preferences.enableHapticFeedback },
                     set: { val in preferenceStore.update { $0.enableHapticFeedback = val } }
@@ -172,6 +205,10 @@ public struct SettingsView: View {
                     get: { preferenceStore.preferences.hideWhenNoOverflow },
                     set: { val in preferenceStore.update { $0.hideWhenNoOverflow = val } }
                 ))
+                
+                Text("该档语义为「无溢出即完全不出现」：当前屏 0 溢出期间灵动岛整体隐退并静默 —— 胶囊不显示，悬停、点击与菜单唤出均不生效。此项优先于上方的「灵动岛打开方式」。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             } header: {
                 Text("交互行为与视觉显示")
             }
@@ -193,11 +230,7 @@ public struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .mainScreenOnly:
-                    Text("灵动岛固定驻留在主显示器（内置刘海屏）顶部，不在外接扩展屏幕显示。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                case .disabled:
-                    Text("仅在检测到内置刘海屏时启用灵动岛，外接平直显示器完全禁用。")
+                    Text("灵动岛固定驻留在主显示器（内置刘海屏）顶部；外接屏幕不再承载灵动岛，该屏被挤压的图标因而无法唤出。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -213,11 +246,15 @@ public struct SettingsView: View {
                 
                 Toggle("开机登录时自动启动 NotchRail", isOn: Binding(
                     get: { preferenceStore.preferences.launchAtLogin },
-                    set: { val in
-                        preferenceStore.update { $0.launchAtLogin = val }
-                        LaunchAtLoginManager.setEnabled(val)
-                    }
+                    set: { val in applyLaunchAtLogin(val) }
                 ))
+                
+                if let message = launchAtLoginMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } header: {
                 Text("系统与启动")
             }

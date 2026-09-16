@@ -32,9 +32,17 @@ _Avoid_: LeftMenuEdge, AppMenuOffset
 A pixel-perfect bitmap snapshot of a MenuBarItem with dynamic transparent-margin trimming and visual-equality comparison.
 _Avoid_: AppDockIcon, GenericSymbol, ScaledThumbnail
 
-**ApplicationAssetVault**:
-The global icon registry keyed by process bundle identifier, holding real bitmaps captured by any active display. A non-focused display resolves its icons straight from the vault by its own confirmed bundle identifier — no pairing, no fallback, no mismatch. It compensates for WindowServer suspending menu item rasterization on non-focused displays.
-_Avoid_: IconPool, BitmapStore, WindowPairing
+**PerDisplayIconCapture**:
+The rule that each display captures the bitmaps of its own status items from its own menu bar region, and consumes only what it captured itself. No display ever reads a bitmap captured by another display. Replaced the abolished cross-display icon registry.
+_Avoid_: ApplicationAssetVault, IconPool, BitmapStore, WindowPairing
+
+**ActiveMenuBarDisplay**:
+The single display whose status items the window server registers under anonymous placeholder names, while every other display keeps its items under their real bundle identifiers. It is determined by the display hosting the frontmost window — not by cursor position — and its ownership can be handed over between displays.
+_Avoid_: FocusedDisplay, CursorSideDisplay
+
+**MenuBarItemWindowSet**:
+The complete set of status item windows the window server maintains for one display. Every display holds a geometrically equivalent set; the sets differ only in which items that display's notch displaces.
+_Avoid_: WindowPool, ItemWindowList
 
 **PulsingCapsule**:
 The neutral breathing placeholder rendered while a MenuBarItem is in its initial capture or refresh cycle.
@@ -85,8 +93,16 @@ The three-tier energy schedule driving menu bar scanning: `Dormant` (timers full
 _Avoid_: PollingLoop, RefreshTimer, IdleScan
 
 **CustomItemOrder**:
-The persisted user-defined ordering of status items. Ordered keys come first; unlisted items follow in physical coordinate order. Edited by dragging icons in the expanded island.
+The persisted user-defined ordering of status items, held **per display by default** and shared across displays only when the user explicitly opts in. Ordered keys come first; unlisted items follow in physical coordinate order. Edited by dragging icons in the expanded island.
 _Avoid_: SortIndex, PriorityList, ManualRank
+
+**ItemOrderScope**:
+The user preference deciding whether status item ordering is held per display or shared across all displays. Defaults to per display; sharing is an explicit opt-in.
+_Avoid_: GlobalOrder, SyncMode
+
+**SilencedByNoOverflow**:
+The rule that a display whose menu bar has no displaced status items renders no island at all while the no-overflow hiding preference is on: the panel retreats and no wake-up path — hover, click, or the tray menu command — can reveal it. This preference takes precedence over the island trigger mode.
+_Avoid_: EmptyIslandSuppression, AutoHideCapsule
 
 **ReorderableIconRow**:
 The expanded-island view that supports fluid drag-and-drop reordering of mirrored icons, committing the new order atomically to the custom item order.

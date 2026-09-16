@@ -13,19 +13,43 @@ public enum TriggerMode: String, Codable, CaseIterable, Sendable {
         case .hoverAndClick: return "悬停或点击（默认推荐）"
         }
     }
+    
+    /// 该档是否响应**悬停**唤出（含移出自动收起）
+    ///
+    /// 三档语义的**唯一定义处**：视图层、状态机、鼠标监听一律引用本属性，
+    /// **不得**各自再写一次 `== .click` / `!= .click` 之类比较 ——
+    /// 同一枚举散落多处口径正是 ADR 0015 背景第 1 条那类漂移缺陷的成因。
+    public var respondsToHover: Bool {
+        self == .hover || self == .hoverAndClick
+    }
+    
+    /// 该档是否响应**点击灵动岛本体**唤出（展开/收起切换）
+    ///
+    /// 「仅鼠标悬停」档**刻意不响应点击**：若响应，该档与「悬停或点击」将退化为
+    /// 可观察行为完全相同的两个选项（「假选择」，见 ADR 0015 决议 1）。
+    public var respondsToCapsuleTap: Bool {
+        self == .click || self == .hoverAndClick
+    }
 }
 
 /// 多显示器策略
+///
+/// **仅两档**（ADR 0015）。历史第三档（原意「外接屏彻底禁用」）已删除，理由是它与
+/// `.mainScreenOnly` 的**可观察行为完全相同**，且实现里存在两处相反口径：
+/// `IslandWindowCoordinator.allowsPanel` 把它当作「不允许非主屏」，而
+/// `ScreenManager.effectiveGeometry(for:)` 又把它并进 `.followFocusedScreen` 分支。
+/// 历史落盘值由 `UserPreferences.init(from:)` 显式迁移到 `.mainScreenOnly`，保留其真实行为。
 public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
     case followFocusedScreen = "followFocusedScreen"
     case mainScreenOnly = "mainScreenOnly"
-    case disabled = "disabled"
-    
+
+    /// 历史第三档的原始编码值：**仅供解码迁移读取**，不得作为新增档位复用
+    fileprivate static let LEGACY_THIRD_CASE_RAW = "disabled"
+
     public var displayName: String {
         switch self {
         case .followFocusedScreen: return "多屏独立多轨模式（默认）"
         case .mainScreenOnly: return "仅在主显示器（刘海屏）显示"
-        case .disabled: return "外接显示器完全禁用"
         }
     }
 }
@@ -34,8 +58,9 @@ public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
 public struct UserPreferences: Codable, Equatable, Sendable {
     /// 灵动岛打开方式
     public var triggerMode: TriggerMode
-    /// 点击图标派发原生菜单后是否自动收起灵动岛
-    public var autoCollapseOnClick: Bool
+    // 注：历史上曾有「点击图标后是否自动收起灵动岛」偏好项，已于 ADR 0015 删除 ——
+    // 收起是平台不变式（灵动岛视口层级高于原生菜单窗口，不收起则菜单被遮挡），
+    // 不可由偏好关闭，故不再提供该开关，派发成功后一律原子收起。
     /// 是否开启触觉反馈
     public var enableHapticFeedback: Bool
     /// 无溢出隐藏图标时是否完全隐藏胶囊
@@ -67,7 +92,6 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     
     public init(
         triggerMode: TriggerMode = .hoverAndClick,
-        autoCollapseOnClick: Bool = true,
         enableHapticFeedback: Bool = true,
         hideWhenNoOverflow: Bool = false,
         externalDisplayMode: ExternalDisplayMode = .followFocusedScreen,
@@ -79,7 +103,6 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         skipScreenCapturePrompt: Bool = false
     ) {
         self.triggerMode = triggerMode
-        self.autoCollapseOnClick = autoCollapseOnClick
         self.enableHapticFeedback = enableHapticFeedback
         self.hideWhenNoOverflow = hideWhenNoOverflow
         self.externalDisplayMode = externalDisplayMode
@@ -94,14 +117,16 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.triggerMode = try container.decodeIfPresent(TriggerMode.self, forKey: .triggerMode) ?? .hoverAndClick
-        self.autoCollapseOnClick = try container.decodeIfPresent(Bool.self, forKey: .autoCollapseOnClick) ?? true
         self.enableHapticFeedback = try container.decodeIfPresent(Bool.self, forKey: .enableHapticFeedback) ?? true
         self.hideWhenNoOverflow = try container.decodeIfPresent(Bool.self, forKey: .hideWhenNoOverflow) ?? false
         
-        // 兼容处理历史字段 followCursor 与 followFocusedScreen
+        // 多显示器策略解码：历史遗留值一律**显式迁移**，绝不在 rawValue 查不到时静默落回默认档 ——
+        // 静默落回会把曾选「仅主屏」的用户悄悄切换成「多屏独立多轨」，那是语义漂移而非兼容。
         if let rawMode = try? container.decode(String.self, forKey: .externalDisplayMode) {
             if rawMode == "followCursor" || rawMode == "followFocusedScreen" {
                 self.externalDisplayMode = .followFocusedScreen
+            } else if rawMode == ExternalDisplayMode.LEGACY_THIRD_CASE_RAW {
+                self.externalDisplayMode = .mainScreenOnly
             } else if let mode = ExternalDisplayMode(rawValue: rawMode) {
                 self.externalDisplayMode = mode
             } else {
