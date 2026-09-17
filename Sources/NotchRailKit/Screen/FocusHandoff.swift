@@ -51,6 +51,7 @@ public final class FocusHandoff {
 
     /// 在灵动岛收起或交互完成时，无感将前台焦点还原给此前的工作应用
     public func restorePreviousFocus() {
+        IslandWindowCoordinator.shared.endTransientKeyActivation()
         guard let app = previousFrontApp, !app.isTerminated else {
             previousFrontApp = nil
             return

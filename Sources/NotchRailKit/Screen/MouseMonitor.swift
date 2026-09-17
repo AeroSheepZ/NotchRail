@@ -384,9 +384,6 @@ public final class MouseMonitor: ObservableObject {
                         guard let self = self else { return }
                         self.externalDwellTimer = nil
                         
-                        // 停留意图确立：通过 FocusHandoff 将系统活动菜单栏移交到目标屏幕 (ADR 0017)
-                        FocusHandoff.shared.handoffFocus(to: geom.displayID)
-                        
                         let currentGeom = ScreenManager.shared.geometry(for: geom.displayID) ?? geom
                         guard let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID),
                               !currentGeom.hasPhysicalNotch,

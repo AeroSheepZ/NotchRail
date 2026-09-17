@@ -110,7 +110,7 @@ public final class IslandWindowCoordinator: ObservableObject {
         panelsByDisplay[displayID]
     }
 
-    /// 为指定屏幕视口执行瞬态获焦激活，驱动 WindowServer 识别活动屏幕转移并立即重置状态 (ADR 0017)
+    /// 为指定屏幕视口执行瞬态获焦激活，驱动 WindowServer 识别活动屏幕转移 (ADR 0017)
     @discardableResult
     public func performTransientKeyActivation(for displayID: CGDirectDisplayID) -> Bool {
         guard let panel = panelsByDisplay[displayID] else {
@@ -118,9 +118,16 @@ public final class IslandWindowCoordinator: ObservableObject {
         }
         panel.allowsTransientKey = true
         panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.allowsTransientKey = false
+        NSApp.activate()
         return true
+    }
+
+    /// 结束瞬态获焦，撤销 Key 权限并放弃焦点
+    public func endTransientKeyActivation() {
+        for panel in panelsByDisplay.values where panel.allowsTransientKey {
+            panel.allowsTransientKey = false
+            panel.resignKey()
+        }
     }
 
     // MARK: - 生命周期

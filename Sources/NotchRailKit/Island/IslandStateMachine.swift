@@ -177,9 +177,6 @@ public final class IslandStateMachine: ObservableObject {
         debounceTimer?.invalidate()
         debounceTimer = nil
         self.activeOverflowCount = overflowCount
-        if let dID = displayID {
-            FocusHandoff.shared.handoffFocus(to: dID)
-        }
         guard currentState != .extended else { return }
         currentState = .extended
     }
