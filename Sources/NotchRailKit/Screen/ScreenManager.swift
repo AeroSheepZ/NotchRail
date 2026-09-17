@@ -23,6 +23,18 @@ public final class ScreenManager: ObservableObject {
             ?? currentGeometry
     }
 
+    /// 获取屏幕的稳定持久标识符（内建刘海屏恒为 "builtin"，外接屏优先派生稳定 UUID，回退 "display_<id>"，ADR 0014 决议 5）
+    public static func persistentKey(for displayID: CGDirectDisplayID) -> String {
+        if let geom = ScreenManager.shared.geometry(for: displayID), geom.isBuiltIn {
+            return "builtin"
+        }
+        if let cfuuid = CGDisplayCreateUUIDFromDisplayID(displayID) {
+            let uuid = CFUUIDCreateString(nil, cfuuid.takeRetainedValue()) as String
+            return "uuid_\(uuid)"
+        }
+        return "display_\(displayID)"
+    }
+
     /// 根据多显示器偏好策略计算当前应生效的目标屏幕几何配置
     ///
     /// 两档穷举（ADR 0015）：`.followFocusedScreen` 跟随焦点屏，`.mainScreenOnly` 恒取主屏基准屏。

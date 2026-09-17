@@ -7,6 +7,7 @@ public enum ClickError: Error, Sendable {
     case invalidWindow      // 缺少有效 windowID（非窗口枚举路径）
     case frameUnavailable   // 无法获取窗口实时 frame
     case eventCreationFailed
+    case focusHandoffFailed  // 跨屏幕活动状态栏焦点移交失败 (ADR 0017)
     /// 事件已送达该状态项，但目标应用在**响应观察窗**内既未弹出菜单、也无其它可见响应，
     /// 即「该项没有辅助点击处理」。调用方据此给出抖动反馈（不是静默）。
     case noResponse
@@ -94,6 +95,20 @@ public actor MenuBarItemClicker {
         // 用窗口实时 frame 计算点击中心（窗口坐标可能已变化）
         guard Bridging.frame(for: item.windowID) != nil else {
             return .failure(.frameUnavailable)
+        }
+
+        // 前置门禁：确保目标项所在屏幕为当前活动菜单栏屏 (ADR 0017 / Ticket #59)
+        // 状态栏菜单弹出与原生光栅化严格绑定在活动屏；向非活动屏派发会导致菜单错弹在活动屏或静默丢弃
+        let isCurrentActive = await MainActor.run {
+            ScreenManager.shared.currentGeometry.displayID == item.displayID
+        }
+        if !isCurrentActive {
+            let switched = await MainActor.run {
+                FocusHandoff.shared.handoffFocus(to: item.displayID)
+            }
+            guard switched else {
+                return .failure(.focusHandoffFailed)
+            }
         }
 
         switch kind {

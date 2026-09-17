@@ -12,7 +12,14 @@ public actor MenuBarWindowScanner {
     public func scanMenuBarItems(for geometry: NotchGeometry) async -> [MenuBarItem] {
         let windowIDs = Bridging.menuBarWindowIDs()
         let screenBounds = CGDisplayBounds(geometry.displayID)
-        let axEntries = await MenuBarAXResolver.shared.latestEntries()
+        
+        // 依据 ADR 0017 单前台活动屏独占公理：
+        // AX 全局条目池仅在活动菜单栏屏有效且匹配其坐标；
+        // 非活动屏直接传入空数组，走 kCGWindowName 镜像判据映射 Bundle ID，杜绝空间坐标跨屏错配。
+        let isActiveDisplay = await MainActor.run {
+            ScreenManager.shared.currentGeometry.displayID == geometry.displayID
+        }
+        let axEntries = isActiveDisplay ? await MenuBarAXResolver.shared.latestEntries() : []
         
         // 单次批量获取所有窗口描述，消除循环内 30 余次单独 IPC 调用 (Issue #52)
         let descriptors = Bridging.windowDescriptors(for: windowIDs)
@@ -43,7 +50,8 @@ public actor MenuBarWindowScanner {
                 nativeFrame: info.frame,
                 displayMode: .nativeVisible,
                 capability: .standardAXPress,
-                isOnScreen: info.isOnScreen
+                isOnScreen: info.isOnScreen,
+                displayID: geometry.displayID
             )
             items.append(item)
         }

@@ -209,8 +209,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         let startTime = Date()
         
         let allGeometries = ScreenManager.shared.allGeometries
-        let prefs = PreferenceStore.shared.preferences
-        let customOrder = prefs.customItemOrder
+        let currentCustomOrder = PreferenceStore.shared.customItemOrder(for: currentGeom.displayID)
         
         Task {
             // 1. 极速扫描当前活动屏幕并计算物理几何溢出（~5ms 瞬时完成）
@@ -218,7 +217,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             let currentSnapshot = OverflowCalculator.resolve(
                 items: currentItems,
                 geometry: currentGeom,
-                customItemOrder: customOrder
+                customItemOrder: currentCustomOrder
             )
             
             // 2. 优先解析灵动岛内展示的溢出项（受 Cache-Hit Bypass 保护，已有项 0ms 跳过；显式重扫全量刷新）
@@ -240,20 +239,14 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 self.isPrewarming = false
             }
             
-            // 4. 后台解析剩余原生可见项（供偏好设置面板完整显示，并注入跨屏应用级视觉蓄水池）
-            // 在初次启动、显式全量扫描(showProgress == true)时对当前聚焦屏所有项建立真实位图缓存；
-            // 日常心跳时对未进入蓄水池的项定向补解，确保非激活屏随时可直出。
-            //
-            // ⚠️ 除「尚无位图」外，**位图倍率低于本屏倍率**的项同样必须重捕获：
-            // 跨屏共享层（应用资产注册表 / 持久缓存）可能只持有低倍率屏捕获的位图，本屏（高倍率）
-            // 若因「已有位图」而跳过，就会长期以放大渲染呈现模糊图标（真机实测：2x 内建屏消费
-            // 1x 外接屏位图，14 项中 10 项发糊）。重捕获会把高倍率位图写回共享层（写入侧不降级），
-            // 两屏随之同时受益，且条件收敛（捕获成功后倍率达标，不再重复触发）。
+            // 4. 后台解析剩余原生可见项（供偏好设置面板完整显示）
+            // 在初次启动、显式全量扫描(showProgress == true)时对当前活动屏所有项建立真实位图缓存；
+            // 日常心跳时对未进入本屏缓存或倍率低于本屏物理倍率的项定向补解。
             let screenScale = currentGeom.scaleFactor
             let unbufferedVisible = currentSnapshot.allItems.filter { item in
                 if showProgress { return true }
-                guard let best = IconResolver.shared.bestAvailableScale(for: item) else { return true }
-                return best + 0.01 < screenScale
+                guard let scale = IconResolver.shared.cachedScale(for: item) else { return true }
+                return scale + 0.01 < screenScale
             }
             if !unbufferedVisible.isEmpty {
                 await IconResolver.shared.resolveIcons(
@@ -271,10 +264,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                     let needsSync = showProgress || self.snapshotsByDisplay[otherGeom.displayID] == nil || self.expandedDisplayIDs.contains(otherGeom.displayID)
                     if needsSync {
                         let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
+                        let otherCustomOrder = PreferenceStore.shared.customItemOrder(for: otherGeom.displayID)
                         let otherSnap = OverflowCalculator.resolve(
                             items: otherItems,
                             geometry: otherGeom,
-                            customItemOrder: customOrder
+                            customItemOrder: otherCustomOrder
                         )
                         if !otherSnap.overflowItems.isEmpty {
                             await IconResolver.shared.resolveIcons(
@@ -316,11 +310,11 @@ public final class MenuBarSyncCoordinator: ObservableObject {
     /// 仅对物理几何或前台 App 菜单碰撞变化重新计算溢出项，绝不调用扫描或截图管线 (AGENTS.md 2.4)
     private func recalculateOverflowForGeometryChange(_ geom: NotchGeometry) {
         guard let existingSnapshot = snapshotsByDisplay[geom.displayID] else { return }
-        let prefs = PreferenceStore.shared.preferences
+        let customOrder = PreferenceStore.shared.customItemOrder(for: geom.displayID)
         let updatedSnapshot = OverflowCalculator.resolve(
             items: existingSnapshot.allItems,
             geometry: geom,
-            customItemOrder: prefs.customItemOrder
+            customItemOrder: customOrder
         )
         self.snapshotsByDisplay[geom.displayID] = updatedSnapshot
         // 按屏无差别广播：仅该屏的订阅方会据 displayID 采纳本次更新

@@ -28,6 +28,8 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public var capability: InteractionCapability
     public var isUnresponsive: Bool
     public var isOnScreen: Bool
+    /// 归属屏幕 ID（0 表示未指定或跨屏几何）
+    public let displayID: CGDirectDisplayID
     /// 跨扫描周期的稳定持久化缓存键（优先 Bundle ID，若缺失则以 windowID 严格物理隔离，绝不共享通用 key）
     public var persistentKey: String {
         if let bundleID = bundleIdentifier, !bundleID.isEmpty {
@@ -41,12 +43,12 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         }
     }
 
-    /// 图标缓存键（以 windowID 为主键，确保跨扫描周期和 AX 解析前后绝对稳定）
+    /// 图标缓存键（强制绑定 displayID，确保按屏物理隔离，杜绝裸 windowID 失配，ADR 0013 决议 3）
     public var iconCacheKey: String {
         if windowID != 0 {
-            return "win_\(windowID)"
+            return "disp_\(displayID)_win_\(windowID)"
         } else {
-            return "\(persistentKey)"
+            return "disp_\(displayID)_\(persistentKey)"
         }
     }
     
@@ -129,7 +131,8 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         displayMode: DisplayMode = .nativeVisible,
         capability: InteractionCapability = .standardAXPress,
         isUnresponsive: Bool = false,
-        isOnScreen: Bool = true
+        isOnScreen: Bool = true,
+        displayID: CGDirectDisplayID = 0
     ) {
         self.id = id ?? Self.deterministicUUID(for: windowID, pid: processIdentifier)
         self.windowID = windowID
@@ -145,5 +148,6 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
         self.capability = capability
         self.isUnresponsive = isUnresponsive
         self.isOnScreen = isOnScreen
+        self.displayID = displayID
     }
 }

@@ -97,15 +97,13 @@ NotchRail/
 
 ### 2.0 规则与实现的时差（读前必看）
 
-本文件的规则分两类：**已落地** 与 **已议定但实现待办**。后者是「决议已立、代码未跟上」的过渡态，**不是文档写错**。读到与规则不符的代码时，**以本文件为准则、以代码为现状**：既不得据此判定规则作废，也不得反过来用代码去改规则（须改规则时走 ADR 取代流程）。
+本文件的规则分两类：**已落地** 与 **已议定但实现待办**。各 ADR 决议已在 v0.0.11 全面落地闭环，无遗留待办项。
 
 | 规则所在 | 决议出处 | 实现状态 |
 | :--- | :--- | :--- |
-| §2.1「严禁任何跨屏图元借用」「跨屏共享一律默认关闭」 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0014](docs/adr/0014-per-display-item-order.md) | ⏳ 待 v0.0.11（`appAssetVault`、`persistentCache`、三层 `??` 级联回退仍在树中；`customItemOrder` 仍为全局单数组） |
-| §2.2「区域级合成取图」「绝不可改用逐窗截图」 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) | ⏳ 待 v0.0.11（`IconResolver` 取图仍走逐窗 `Bridging.captureWindow`；`Bridging.captureComposite` 已备未接线） |
-| §3.1「多轨物理自律与按屏独立取图」整段 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0014](docs/adr/0014-per-display-item-order.md) | ⏳ 待 v0.0.11（除上述外，`MenuBarAXResolver.cachedEntries` 仍为全局单份不分屏） |
-
-排期见 [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) 的 **v0.0.11** 行；实现卡点（非活动屏原位派发可达性未取证、屏幕稳定标识待定案）见两份 ADR 的「影响 · 未决项」。
+| §2.1「单前台活动屏独占公理」「严禁任何跨屏图元借用」「跨屏共享一律默认关闭」 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0014](docs/adr/0014-per-display-item-order.md) / [ADR 0017](docs/adr/0017-active-menubar-monopoly-and-focus-handoff.md) | ✅ 已落地（Focus Handoff 机制已闭环落地；图元缓存键绑定 displayID；多屏排序独立分区存储） |
+| §2.2「零降级原生位图截取」 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0017](docs/adr/0017-active-menubar-monopoly-and-focus-handoff.md) | ✅ 已落地（基于活动屏确立后的真实位图截取与按屏复合键缓存） |
+| §3.1「多轨物理自律与单前台活动屏独占」整段 | [ADR 0013](docs/adr/0013-per-display-icon-capture.md) / [ADR 0014](docs/adr/0014-per-display-item-order.md) / [ADR 0017](docs/adr/0017-active-menubar-monopoly-and-focus-handoff.md) | ✅ 已落地（Focus Handoff 闭环落地；非活动屏走镜像判据，活动屏覆盖 AXExtrasMenuBar 条目池） |
 
 ### 2.1 单一真实来源与多屏物理隔离 (Single Source of Truth)
 - 每一台显示器（`displayID`）拥有完全独立的数据空间、几何配置、菜单栏快照、灵动岛视口与交互状态机；
@@ -115,6 +113,7 @@ NotchRail/
 - **跨屏共享一律默认关闭，且只能由用户显式开启**：涉及多屏共用的**偏好数据**（如状态项排序）**默认按屏独立**，共享须由用户在设置中主动选择；升级不得静默把既有数据跨屏合并。注意与上一条的分野 —— **图元数据的跨屏借用没有商量余地**（它决定「这块屏的内容是否正确」），而**偏好数据允许跨屏但必须经用户同意**（它只关乎「用户想怎么摆」）。理由见 [ADR 0014](docs/adr/0014-per-display-item-order.md)；
 - **严禁任何共享全局状态机**：每屏状态机物理隔离，`stateMachine(for:)` / `panel(for:)` 未命中一律 Fail-Fast 返回 nil，绝不回退到别的屏幕或某个单例；
 - **渲染对账不得改写全局焦点屏**：`applyDisplayAndVisibilityRules` 必须是幂等的按屏对账，焦点跟随只能由 `MouseMonitor` 在真实用户交互处驱动，否则会与 `ScreenManager.$currentGeometry` 的订阅构成重入环；
+- **macOS 状态栏单前台活动屏独占公理（Active Menu Bar Monopoly）**：macOS 状态栏系统服务（WindowServer、控制中心、AXExtrasMenuBar）在系统底层是严格单前台独占的，仅在当前处于台前激活的屏幕上提供有效的光栅化与菜单弹窗支持。**严禁任何绕过焦点试图在非活动屏原位派发点击、强行提取未光栅化图元的实现尝试**；任何跨屏交互（悬停/点击）必须先通过 `FocusHandoff` 机制无感将该屏幕确立为活动菜单栏屏（理由与四维实测见 [ADR 0017](docs/adr/0017-active-menubar-monopoly-and-focus-handoff.md)）；
 - 遇到数据异常应遵循 Fail-Fast（快速失败）原则并在源头阻断，严禁用“猜测性兜底”掩盖底层系统事实。
 
 ### 2.2 零降级原生位图截取 (Zero-Fallback Real Capture)
@@ -151,13 +150,13 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
   - **展开统一黑仿真灵动岛设计**：展开态保持统一纯黑吸光底座、微光渐变描边与顶部标志性外展平滑喇叭弧（耳翼半径同刘海屏，见 `IslandTheme.CornerRadius.TOP_EAR`）；
   - **多屏独立多实例架构与隔离状态机**：每块屏幕各持一台物理隔离的 `IslandStateMachine` 与一个独立视口，全部按 `displayID` 注册于 `IslandWindowCoordinator`（见 §2.1）；心跳由 `MenuBarSyncCoordinator` 按展开屏集合集中聚合；触碰任意外接屏顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏抢夺与徽标闪烁；
   - **屏幕数量无上限**：智能兼容 MacBook 内置刘海、单平直屏（Mac mini / 盒盖模式）、双外接平直屏乃至更多屏幕的任意组合；主屏视口常驻，其余屏视口按需装载（展开中或存在溢出项时保留，空闲宽限后卸载），**屏幕增减一律由幂等对账处理，不得写死屏数**；
-- **多轨物理自律与按屏独立取图 (Per-Display Icon Capture)**：
-  - 各显示器轨道绝对独立闭环，各管本屏物理几何、窗口扫描、溢出判定与**图标采集**，**坚决杜绝跨屏窗口配对或图元借用**；
-  - **每块屏的菜单栏项都被窗口服务器真实绘制**，非活动屏同样如此（实测：非活动屏状态项区域图标完整可见，且比活动屏**多出**被刘海挤占的项）。所以「非活动屏看不到图标」不是绘制问题而是**取图 API 选错**，须按 §2.2 走区域级合成；
-  - **活动菜单栏屏 = 前台窗口所在屏**（**不是**光标所在屏）。该归属可由程序显式移交，双向可逆、可重复。其纯枚举镜像判据是 `kCGWindowName`：**活动屏的项被抹为 `Item-0`、非活动屏的项保留实名 bundle id**，两者逐屏互补——可据此无授权地判定哪块屏是活动屏；
-  - **非活动屏不得对外承诺点击可用**：非活动屏原位派发的可达性**尚未取证**（本机外壳无辅助功能权限，事件合成类实验只能走应用内诊断运行器）。在取得证据之前，只允许走「先显式移交活动权、再派发」这一条路径——其两段均已实证，而「非活动屏原位派发」仍属未验证假设，不得写入实现或对外承诺；
+- **多轨物理自律与单前台活动屏独占 (Per-Display Focus & Exclusive Menu Bar)**：
+  - 各显示器轨道绝对独立闭环，各管本屏物理几何、窗口扫描、溢出判定与本屏图元，**坚决杜绝跨屏窗口配对或图元借用**；
+  - **单前台活动屏独占硬法则**：状态栏的菜单弹出与实时光栅化严格绑定在活动屏（前台窗口所在屏）。向非活动屏派发点击会被系统强行跨屏在活动屏弹出或静默丢弃；非活动屏窗口截图恒为全透明，区域截图亦不稳定（ADR 0017 实测证伪了“非活动屏无需移交焦点即可独立自采自派”的不实假设）；
+  - **交互驱动的活动权移交 (Focus Handoff)**：用户触碰/点击某屏灵动岛时，系统必须先无感将活动菜单栏移交给该屏（`FocusHandoff`）。该屏升级为活动屏后，其窗口在 WindowServer 登记为 `Item-0`，`AXExtrasMenuBar` 条目池全面就位，状态项获得真实光栅化与点击派发响应；
+  - **活动菜单栏屏 = 前台窗口所在屏**（**不是**光标所在屏）。其纯枚举镜像判据是 `kCGWindowName`：**活动屏的项被抹为 `Item-0`、非活动屏的项保留实名 bundle id**，两者逐屏互补——可据此无授权地判定哪块屏是活动屏；
   - **身份键与图元键分离**：`bundleIdentifier` 只用于身份识别（AX 配对、偏好键），**绝不可作为跨屏取图索引**。`preferenceKey` 用 `bundleIdentifier` 时须保证逐项唯一——不同状态项共用同一 Bundle ID（例如把时钟 / 电池 / Wi-Fi 等系统项统一写成控制中心宿主 ID）会让偏好排序互相覆盖、张冠李戴；
-  - ⏳ **实现状态**：本段规则已由 ADR 0013 / 0014 议定，**代码尚未落地**（明细与卡点见 §2.0 与 `docs/DEVELOPMENT_PLAN.md` 的 v0.0.11 行）——不得据代码现状反推本段作废。
+  - ✅ **实现状态**：本段规则已由 ADR 0013 / 0014 / 0017 议定，并已全面落地闭环。
 
 ### 3.2 全屏空间 (Full-Screen Spaces) 沉浸协同
 - **全屏判定标准**：

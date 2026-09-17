@@ -60,13 +60,8 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 内部状态
 
-    /// 捕获成功的图像缓存（iconCacheKey → 带真实倍率的截图）
+    /// 捕获成功的图像缓存（按 iconCacheKey 索引，绑定 displayID 与 windowID，ADR 0013）
     private var cache: [String: CapturedIcon] = [:]
-    /// 全局真实应用程序图元注册表（bundleIdentifier → 带真实倍率的原生位图资产）
-    /// 纯物理双轨解耦：任一激活屏幕成功光栅化捕获，即登记入库；非激活屏幕直接按确凿 Bundle ID 取图
-    private var appAssetVault: [String: CapturedIcon] = [:]
-    /// 跨窗口生命周期的稳定应用图元二级缓存（persistentKey → 带真实倍率的截图）
-    private var persistentCache: [String: CapturedIcon] = [:]
     /// LRU 访问顺序（从最旧到最新）
     private var accessOrder: [String] = []
     /// 失败计数（含最后失败时间，用于冷却判定）
@@ -228,47 +223,26 @@ public final class IconResolver: ObservableObject {
                 let existingIcon = cache[key]
                 if !CapturedIcon.isVisuallyEqual(existingIcon, icon) || !isAlreadyLoaded {
                     cache[key] = icon
-                    // 跨屏复用层（应用资产注册表 / 跨窗口持久缓存）**绝不降级分辨率** —— 见
-                    // `storeKeepingHighestResolution` 的说明。低倍率位图一旦覆盖高倍率位图，
-                    // 高倍率屏会长期呈现放大后的模糊图标。
-                    Self.storeKeepingHighestResolution(&persistentCache, key: item.persistentKey, icon: icon)
-                    if let bundleID = item.bundleIdentifier, !bundleID.isEmpty {
-                        Self.storeKeepingHighestResolution(&appAssetVault, key: bundleID, icon: icon)
-                    }
                     updatedStates[key] = .loaded(icon.nsImage)
                     touchAccessOrder(for: key)
                     statesChanged = true
                 }
                 // 捕获成功 → 重置失败计数
                 failedCaptures.removeValue(forKey: key)
-                failedCaptures.removeValue(forKey: item.persistentKey)
             } else if result.transparentKeys.contains(key) {
-                // 非激活屏全透明省电特性保护：
-                // 1. 若本项此前已捕获有效真实位图，或应用资产注册表中已登记该应用的真实位图，直接直出
-                let existing = resolveCachedIcon(for: item)
-                if let existing = existing {
-                    if cache[key] == nil {
-                        cache[key] = existing
-                        touchAccessOrder(for: key)
-                    }
+                // 非活动屏全透明特性保护：
+                // 若本项此前已捕获有效真实位图，直接直出；若尚未截到位图，严格保持中性呼吸脉动态（Zero-Fallback）
+                if let existing = cache[key] {
                     let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                     if !isAlreadyLoaded {
                         updatedStates[key] = .loaded(existing.nsImage)
                         statesChanged = true
                     }
-                    // 本地已有真实位图，严禁记录失败或拉黑
                     failedCaptures.removeValue(forKey: key)
-                    failedCaptures.removeValue(forKey: item.persistentKey)
                 }
-                // 2. 若冷启动尚未截到位图，保持原态（如 .pending），绝不记录失败，杜绝误入黑名单
             } else if result.failedKeys.contains(key) {
                 // 真正系统调用失败或窗口已销毁
-                let fallback = resolveCachedIcon(for: item)
-                if let fallback = fallback {
-                    if cache[key] == nil {
-                        cache[key] = fallback
-                        touchAccessOrder(for: key)
-                    }
+                if let fallback = cache[key] {
                     let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                     if !isAlreadyLoaded {
                         updatedStates[key] = .loaded(fallback.nsImage)
@@ -284,12 +258,7 @@ public final class IconResolver: ObservableObject {
                 }
             } else {
                 // 被黑名单冷却跳过或无有效窗口 bounds
-                let fallback = resolveCachedIcon(for: item)
-                if let fallback = fallback {
-                    if cache[key] == nil {
-                        cache[key] = fallback
-                        touchAccessOrder(for: key)
-                    }
+                if let fallback = cache[key] {
                     let isAlreadyLoaded = isLoaded(key, in: updatedStates)
                     if !isAlreadyLoaded {
                         updatedStates[key] = .loaded(fallback.nsImage)
@@ -313,35 +282,9 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 图元缓存查找
 
-    /// 三层图元查找唯一入口：本屏内存缓存 → 全局应用图元注册表 → 跨窗口持久缓存
-    ///
-    /// 三层均为「已成功捕获真实位图」的合法来源（AGENTS.md 3.1 Application Asset Vault），
-    /// 不存在猜测性兜底；统一由此处治理，杜绝三处调用各自展开 `??` 级联导致的语义漂移。
+    /// 本屏图元查找唯一入口（严格本屏物理隔离，零跨屏借用，ADR 0013 / ADR 0017）
     private func resolveCachedIcon(for item: MenuBarItem) -> CapturedIcon? {
         cache[item.iconCacheKey]
-            ?? (item.bundleIdentifier.flatMap { appAssetVault[$0] })
-            ?? persistentCache[item.persistentKey]
-    }
-
-    /// 写入跨屏复用层，且**绝不降级分辨率**
-    ///
-    /// 应用资产注册表（`appAssetVault`）与跨窗口持久缓存（`persistentCache`）是同一 Bundle ID /
-    /// 持久键在**所有屏幕**共享的图元来源，因此写入方来自哪块屏并不确定：
-    /// 1x 平直外接屏先捕获、2x 内建刘海屏后捕获（或反之）都会调用本方法。
-    ///
-    /// 若不做保护，低倍率位图会覆盖高倍率位图，高倍率屏随后按逻辑尺寸放大渲染 →
-    /// 图标整体发糊（真机实测：2x 内建屏消费 1x 位图时 14 项中 10 项发糊）。故仅当新位图的
-    /// `scale` **严格高于**已存位图时才覆盖；倍率相同时保留既有位图（像素量一致，无收益且
-    /// 避免无谓替换）。可见性为 internal 以支持 Spike 契约用例直接验证。
-    nonisolated static func storeKeepingHighestResolution(
-        _ store: inout [String: CapturedIcon],
-        key: String,
-        icon: CapturedIcon
-    ) {
-        if let existing = store[key], existing.scale >= icon.scale {
-            return
-        }
-        store[key] = icon
     }
 
     /// 判断给定 iconCacheKey 在状态表中是否已处于 loaded 态
@@ -483,7 +426,12 @@ public final class IconResolver: ObservableObject {
 
     // MARK: - 查询与调试
 
-    /// 获取菜单栏项的最佳真实位图（优先实时解析态，回退窗口级缓存，最后回退跨周期持久缓存）
+    /// 获取菜单栏项在本屏已缓存位图的实际倍率（若未缓存则返回 nil）
+    public func cachedScale(for item: MenuBarItem) -> CGFloat? {
+        cache[item.iconCacheKey]?.scale
+    }
+
+    /// 获取菜单栏项的最佳真实位图（仅取本屏实时解析态或本屏内存缓存，零跨屏借用，ADR 0013）
     public func image(for item: MenuBarItem) -> NSImage? {
         if case .loaded(let img) = iconStates[item.iconCacheKey] {
             return img
@@ -491,67 +439,12 @@ public final class IconResolver: ObservableObject {
         if let cached = cache[item.iconCacheKey] {
             return cached.nsImage
         }
-        if let bundleID = item.bundleIdentifier, let appIcon = appAssetVault[bundleID] {
-            return appIcon.nsImage
-        }
-        if let persistent = persistentCache[item.persistentKey] {
-            return persistent.nsImage
-        }
         return nil
     }
 
-    // MARK: - 诊断（只读，不改变任何状态）
-
-    /// 图元来源层次（诊断用）
-    public enum IconSourceLayer: String, Sendable {
-        case cache      // 本屏窗口级内存缓存（含由共享层回填的项）
-        case vault      // 全局应用资产注册表（跨屏共享）
-        case persistent // 跨窗口持久缓存（跨屏共享）
-        case none       // 三层皆无 → 非激活屏只能长期停在占位态
-    }
-
-    /// 诊断用：查询某项图元的**跨屏共享层**来源（刻意忽略本屏窗口缓存）
-    ///
-    /// 非激活屏截图必全透明，其图标**只能**由跨屏共享层直出，故此项即该屏的真实供图能力。
-    public func diagnoseCrossScreenSource(for item: MenuBarItem) -> IconSourceLayer {
-        if let bundleID = item.bundleIdentifier, appAssetVault[bundleID] != nil { return .vault }
-        if persistentCache[item.persistentKey] != nil { return .persistent }
-        return .none
-    }
-
-    /// 某项当前可得的**最高**位图倍率（本屏缓存 / 应用资产注册表 / 持久缓存三者取最大）
-    ///
-    /// 用于判定是否需要为某项重新捕获：跨屏共享层可能只持有**低倍率屏**捕获的位图，
-    /// 此时高倍率屏若因「已有位图」而跳过捕获，就会长期以放大渲染呈现模糊图标。
-    /// 返回 nil 表示三层均无该位图（必须捕获）。
-    public func bestAvailableScale(for item: MenuBarItem) -> CGFloat? {
-        var best = cache[item.iconCacheKey]?.scale
-        if let bundleID = item.bundleIdentifier, let v = appAssetVault[bundleID] {
-            best = max(best ?? 0, v.scale)
-        }
-        if let p = persistentCache[item.persistentKey] {
-            best = max(best ?? 0, p.scale)
-        }
-        return best
-    }
-
-    /// 诊断用：应用资产注册表内容快照（键 → 倍率与像素尺寸），按键排序
-    ///
-    /// 倍率是判定「非激活屏图标发糊」的直接证据：共享层位图倍率低于消费屏倍率时必被放大。
-    public var diagnoseVaultContents: [(key: String, scale: CGFloat, pixelSize: CGSize)] {
-        appAssetVault
-            .map { ($0.key, $0.value.scale, CGSize(width: $0.value.cgImage.width, height: $0.value.cgImage.height)) }
-            .sorted { $0.key < $1.key }
-    }
-
-    /// 诊断用：跨窗口持久缓存条目数
-    public var diagnosePersistentCount: Int { persistentCache.count }
-
-    /// 清空内存缓存（偏好设置变更时调用）
+    /// 清空内存缓存（偏好设置变更或拓扑刷新时调用）
     public func clearCache() {
         cache.removeAll()
-        appAssetVault.removeAll()
-        persistentCache.removeAll()
         accessOrder.removeAll()
         failedCaptures.removeAll()
         iconStates.removeAll()

@@ -110,6 +110,19 @@ public final class IslandWindowCoordinator: ObservableObject {
         panelsByDisplay[displayID]
     }
 
+    /// 为指定屏幕视口执行瞬态获焦激活，驱动 WindowServer 识别活动屏幕转移并立即重置状态 (ADR 0017)
+    @discardableResult
+    public func performTransientKeyActivation(for displayID: CGDirectDisplayID) -> Bool {
+        guard let panel = panelsByDisplay[displayID] else {
+            return false
+        }
+        panel.allowsTransientKey = true
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.allowsTransientKey = false
+        return true
+    }
+
     // MARK: - 生命周期
 
     /// 初始化并挂载多屏灵动岛面板，启动多屏追踪
@@ -195,6 +208,7 @@ public final class IslandWindowCoordinator: ObservableObject {
             return existing
         }
         let machine = IslandStateMachine()
+        machine.displayID = displayID
         machinesByDisplay[displayID] = machine
         machineSubscriptions[displayID] = machine.$currentState
             .receive(on: RunLoop.main)
@@ -259,8 +273,9 @@ public final class IslandWindowCoordinator: ObservableObject {
         }
 
         let viewport = calculateViewportBounds(for: geom)
-        // 主屏仅在自身为平直屏（Mac mini / 盒盖模式）时折叠隐藏；非主屏折叠态一律 100% 隐形
-        let hideWhenCollapsed = isPrimary ? !geom.hasPhysicalNotch : true
+        // 纯物理几何判定 (AGENTS.md §2.4 / Ticket #59)：
+        // 内建物理刘海屏常态常驻黑胶囊遮挡物理黑洞；外接平直显示器折叠常态 100% 隐形透明且穿透
+        let hideWhenCollapsed = !geom.hasPhysicalNotch
         let shouldHideForNoOverflow = prefs.hideWhenNoOverflow && overflowCount == 0 && !isExpanded
         let isFullScreenHidden = machine.currentState.isFullScreenHidden ||
                                  (geom.isFullScreenSpace && !MouseMonitor.shared.isAwakenedInFullScreen)
@@ -369,6 +384,7 @@ public final class IslandWindowCoordinator: ObservableObject {
         let paddedRect = screenRect.insetBy(dx: -4, dy: -4)
         if !NSMouseInRect(location, paddedRect, false) {
             machine.triggerCollapse()
+            FocusHandoff.shared.restorePreviousFocus()
         }
     }
 }

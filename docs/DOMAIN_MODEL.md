@@ -129,16 +129,18 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
     public var capability: InteractionCapability
     public var isUnresponsive: Bool
     public var isOnScreen: Bool
+    /// 归属屏幕 ID（0 表示未指定或跨屏几何）
+    public let displayID: CGDirectDisplayID
     
     /// 跨扫描周期的稳定持久化缓存键（优先 Bundle ID；缺失时依次回退 ax/title，最终以 windowID 严格物理隔离）
     public var persistentKey: String
     
-    /// 图标缓存键（以 windowID 为主键，确保跨扫描周期与 AX 解析前后绝对稳定）
+    /// 图标缓存键（强制绑定 displayID，确保按屏物理隔离，杜绝裸 windowID 失配，ADR 0013 决议 3）
     public var iconCacheKey: String {
         if windowID != 0 {
-            return "win_\(windowID)"
+            return "disp_\(displayID)_win_\(windowID)"
         } else {
-            return "\(persistentKey)"
+            return "disp_\(displayID)_\(persistentKey)"
         }
     }
     
@@ -165,7 +167,7 @@ public struct MenuBarItem: Identifiable, Equatable, Sendable {
 
 ```swift
 public struct Entry: Sendable {
-    /// 持有该 AXExtrasMenuBar 的应用本身 PID —— 事件派发的正确目标来源
+    /// 持有该 AXExtrasMenuBar 的应用本身 PID（仅用于图元归属与 AX 元素定位，不作为点击派发目标；理由见 ADR 0010）
     public let processIdentifier: pid_t
     public let appName: String
     public let bundleIdentifier: String?
@@ -212,7 +214,9 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var showMenuBarIcon: Bool                    // 默认 true
     public var hoverExpandDelayMs: Double               // 默认取 IslandTheme.Timing.HOVER_EXPAND_DELAY
     public var collapseDelayMs: Double                  // 默认取 IslandTheme.Timing.COLLAPSE_DELAY
-    public var customItemOrder: [String]                // 默认 []；作用域见 CONTEXT.md 的 ItemOrderScope（默认按屏独立）
+    public var customItemOrdersByDisplay: [String: [String]] // 按持久化屏幕键隔离存储的排序 (ADR 0014)
+    public var syncItemOrderAcrossDisplays: Bool        // 默认 false；是否跨屏同步排序 (ADR 0014)
+    public var customItemOrder: [String]                // 计算属性；作用域见 CONTEXT.md 的 ItemOrderScope（默认按屏独立）
     public var launchAtLogin: Bool                      // 默认 false；系统侧注册状态的镜像
     public var skipScreenCapturePrompt: Bool            // 默认 false
 }
@@ -380,10 +384,11 @@ stateDiagram-v2
 | **ADR 0010** | 状态项窗口 owner 派发与双通道点击策略（决议 3、6 被 0011 取代） | `MenuBarItem.clickTargetPID`, `MenuBarClickKind`, `MenuBarClickEventFactory` |
 | **ADR 0011** | 辅助点击走会话事件流 + 目标窗口字段路由（决议 4 的「非本进程」过滤被 0012 取代） | `MenuBarItemClicker`, `ClickError.noResponse`, `Bridging.popUpMenuWindowOwners` |
 | **ADR 0012** | 辅助点击响应判定接受本进程菜单 | `MenuBarItemClicker`, `Bridging.popUpMenuWindowOwners` |
-| **ADR 0013**（⏳ 实现待 v0.0.11） | 按屏独立取图：废除跨屏图元共享层（取代 0004 决议 1 的取图路径） | `IconResolver`, `MenuBarItem.iconCacheKey`, `MenuBarItemWindowSet`, `ActiveMenuBarDisplay`, `PerDisplayIconCapture` |
-| **ADR 0014**（⏳ 实现待 v0.0.11） | 排序偏好默认按屏独立、多屏共用须显式选择 | `UserPreferences.customItemOrder`, `CustomItemOrder`, `ItemOrderScope` |
+| **ADR 0013** | 按屏独立取图：废除跨屏图元共享层（取代 0004 决议 1；部分被 0017 修正） | `IconResolver`, `MenuBarItem.iconCacheKey`, `MenuBarItemWindowSet`, `ActiveMenuBarDisplay`, `PerDisplayIconCapture` |
+| **ADR 0014** | 排序偏好默认按屏独立、多屏共用须显式选择 | `UserPreferences.customItemOrder`, `CustomItemOrder`, `ItemOrderScope` |
 | **ADR 0015** | 设置项与实现对齐：删除名不副实的选项（决议 4 被 0016 取代） | `UserPreferences`, `ExternalDisplayMode`, `SilencedByNoOverflow` |
 | **ADR 0016** | 胶囊点击恒为展开/收起切换，模式门禁收敛为唯一定义 | `TriggerMode.respondsToHover`, `TriggerMode.respondsToCapsuleTap`, `IslandStateMachine.handleCapsuleTap` |
+| **ADR 0017** | 状态栏单前台活动屏独占公理与交互驱动活动权移交（修正 0013 决议 1、4） | `FocusHandoff`, `ActiveMenuBarDisplay`, `IslandWindowCoordinator`, `MenuBarItemClicker` |
 
-> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代；ADR 0011 决议 4 的 owner 过滤子句中「非本进程」一项已被 **ADR 0012** 取代；ADR 0004 决议 1 的「逐窗截图」取图路径已被 **ADR 0013** 取代（其零降级原则决议 2、3、4 继续有效）；ADR 0015 决议 4 的「胶囊点击仅展开」已被 **ADR 0016** 取代（决议 1、2、3、5 继续有效），均详见对应 ADR 顶部的状态横幅。另：**ADR 0013 与 ADR 0014 的决议已生效但实现待办**（⏳ v0.0.11）——本矩阵列出的是两份决议**所作用**的模型，**不等于当前代码已符合其要求**，判据见 `AGENTS.md` §2.0。
+> 注：ADR 0002 的决议 3（视口借调）与平直托轨形态已被 **ADR 0008** 取代；ADR 0008 的决议 2 与决议 5 中「第三块及以上显示器无归属面板」的部分，已被 **ADR 0009** 取代；ADR 0005 的决议（单一 `postToPid` 通道）已被 **ADR 0010** 取代；ADR 0010 的决议 3、6（辅助点击按 `isOnScreen` 判定可达性、未合成项无通道、`ClickError.unreachableTarget`）已被 **ADR 0011** 取代；ADR 0011 决议 4 的 owner 过滤子句中「非本进程」一项已被 **ADR 0012** 取代；ADR 0004 决议 1 的「逐窗截图」取图路径已被 **ADR 0013** 取代（其零降级原则决议 2、3、4 继续有效）；ADR 0013 决议 1、4 中关于非活动屏可直接独立取图和原位派发的假设已被 **ADR 0017** 取代；ADR 0015 决议 4 的「胶囊点击仅展开」已被 **ADR 0016** 取代（决议 1、2、3、5 继续有效），均详见对应 ADR 顶部的状态横幅。ADR 0013、0014 与 0017 的决议均已在 v0.0.11 全面落地闭环。
 

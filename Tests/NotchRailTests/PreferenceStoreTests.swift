@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 @testable import NotchRailKit
 
 @MainActor
@@ -124,4 +125,65 @@ final class PreferenceStoreTests: XCTestCase {
         let reloadedStore = PreferenceStore(userDefaults: defaults)
         XCTAssertEqual(reloadedStore.preferences.customItemOrder, ["com.app.x", "com.app.y"])
     }
+
+    /// 验证多显示器按屏独立分区存储与重置隔离性（ADR 0014 决议 1）
+    func testPerDisplayCustomItemOrderIsolation() {
+        let suiteName = "com.notchrail.test.multidisplay.order.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        
+        let store = PreferenceStore(userDefaults: defaults)
+        let display1: CGDirectDisplayID = 1001
+        let display2: CGDirectDisplayID = 1002
+        
+        store.setCustomItemOrder(["com.app.disp1"], for: display1)
+        store.setCustomItemOrder(["com.app.disp2"], for: display2)
+        
+        XCTAssertEqual(store.customItemOrder(for: display1), ["com.app.disp1"])
+        XCTAssertEqual(store.customItemOrder(for: display2), ["com.app.disp2"])
+        
+        // 重置 display1 绝不影响 display2
+        store.resetCustomItemOrder(for: display1)
+        XCTAssertTrue(store.customItemOrder(for: display1).isEmpty)
+        XCTAssertEqual(store.customItemOrder(for: display2), ["com.app.disp2"])
+        
+        // 持久化重载验证
+        let reloadedStore = PreferenceStore(userDefaults: defaults)
+        XCTAssertEqual(reloadedStore.customItemOrder(for: display2), ["com.app.disp2"])
+    }
+
+    /// 验证跨屏同步开关生效（ADR 0014 决议 2）
+    func testSyncItemOrderAcrossDisplays() {
+        let suiteName = "com.notchrail.test.sync.order.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        
+        let store = PreferenceStore(userDefaults: defaults)
+        let display1: CGDirectDisplayID = 2001
+        let display2: CGDirectDisplayID = 2002
+        
+        store.setSyncItemOrderAcrossDisplays(true)
+        XCTAssertTrue(store.preferences.syncItemOrderAcrossDisplays)
+        
+        store.setCustomItemOrder(["com.app.synced"], for: display1)
+        XCTAssertEqual(store.customItemOrder(for: display1), ["com.app.synced"])
+        XCTAssertEqual(store.customItemOrder(for: display2), ["com.app.synced"])
+    }
+
+    /// 验证旧版单数组 customItemOrder 向后兼容平滑迁移至主屏/内建屏分区
+    func testLegacyCustomItemOrderMigration() throws {
+        let legacyJSON = """
+        {
+            "customItemOrder": ["legacy.app.1", "legacy.app.2"],
+            "triggerMode": "click"
+        }
+        """.data(using: .utf8)!
+        
+        let decoded = try JSONDecoder().decode(UserPreferences.self, from: legacyJSON)
+        XCTAssertEqual(decoded.triggerMode, .click)
+        XCTAssertEqual(decoded.customItemOrder, ["legacy.app.1", "legacy.app.2"])
+        XCTAssertEqual(decoded.itemOrder(for: "builtin"), ["legacy.app.1", "legacy.app.2"])
+        XCTAssertFalse(decoded.syncItemOrderAcrossDisplays)
+    }
 }
+

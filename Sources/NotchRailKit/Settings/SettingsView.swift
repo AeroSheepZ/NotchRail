@@ -242,6 +242,17 @@ public struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                
+                Divider()
+                
+                Toggle("跨显示器同步应用排序", isOn: Binding(
+                    get: { preferenceStore.preferences.syncItemOrderAcrossDisplays },
+                    set: { val in PreferenceStore.shared.setSyncItemOrderAcrossDisplays(val) }
+                ))
+                
+                Text("默认关闭（各屏幕维护独立的状态项拖拽排序）。开启后，对任一屏幕的排序调整将自动同步至所有连接的显示器。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             } header: {
                 Text("多显示器协同策略")
             }
@@ -365,12 +376,14 @@ public struct SettingsView: View {
             // 0. 多显示器分段切换选择器（多屏连接时支持手动切换查看，解耦鼠标跨屏导致的数据源抖动）
             let allScreens = availableGeometries
             if allScreens.count > 1 {
+                let currentActiveDisplayID = ScreenManager.shared.currentGeometry.displayID
                 Picker("显示器", selection: Binding(
                     get: { activeDisplayID },
                     set: { selectedDisplayID = $0 }
                 )) {
                     ForEach(allScreens, id: \.displayID) { geom in
-                        Text(geom.displayName).tag(geom.displayID)
+                        let isActive = geom.displayID == currentActiveDisplayID
+                        Text("\(geom.displayName) (\(isActive ? "● 活动中" : "○ 待命"))").tag(geom.displayID)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -425,9 +438,9 @@ public struct SettingsView: View {
                             .clipShape(Capsule())
                     }
                     
-                    if !preferenceStore.preferences.customItemOrder.isEmpty {
+                    if !PreferenceStore.shared.customItemOrder(for: activeDisplayID).isEmpty {
                         Button {
-                            preferenceStore.resetCustomItemOrder()
+                            PreferenceStore.shared.resetCustomItemOrder(for: activeDisplayID)
                         } label: {
                             Text("恢复默认排序")
                                 .font(.system(size: 10, weight: .medium))
@@ -520,8 +533,12 @@ public struct SettingsView: View {
                 
                 Button {
                     isManualScanning = true
-                    MenuBarSyncCoordinator.shared.scheduleSync(immediate: true, showProgress: true)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    Task { @MainActor in
+                        if activeDisplayID != ScreenManager.shared.currentGeometry.displayID {
+                            FocusHandoff.shared.handoffFocus(to: activeDisplayID)
+                        }
+                        MenuBarSyncCoordinator.shared.scheduleSync(immediate: true, showProgress: true)
+                        try? await Task.sleep(nanoseconds: 600_000_000)
                         isManualScanning = false
                     }
                 } label: {
@@ -594,7 +611,7 @@ public struct SettingsView: View {
         // 3. 排序策略：
         //   - 岛内溢出项置顶（若存在 customItemOrder 优先按用户自定义排布）
         //   - 菜单栏原生可见项倒序排布
-        let customOrder = preferenceStore.preferences.customItemOrder
+        let customOrder = PreferenceStore.shared.customItemOrder(for: displayID)
         let itemComparator = MenuBarItem.comparator(for: customOrder)
         result.sort { lhs, rhs in
             if lhs.isOverflowed != rhs.isOverflowed {

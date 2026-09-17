@@ -73,12 +73,73 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var hoverExpandDelayMs: Double
     /// 移出收起宽限延迟 (ms)
     public var collapseDelayMs: Double
-    /// 用户自定义应用在岛内展示的先后次序（基于 bundleIdentifier 或 persistentKey 列表）
-    public var customItemOrder: [String]
+    /// 共享排序持久键
+    public static let SHARED_DISPLAY_KEY = "shared"
+    /// 主显示器基准持久键
+    public static let PRIMARY_DISPLAY_KEY = "primary"
+    /// 内建刘海屏持久键
+    public static let BUILTIN_DISPLAY_KEY = "builtin"
+
+    /// 是否在所有显示器之间共享相同的状态项排序（默认关闭，ADR 0014 决议 2）
+    public var syncItemOrderAcrossDisplays: Bool
+    /// 按屏幕独立持久化的状态项自定义排序字典（分区键为屏幕稳定持久标识，ADR 0014 决议 1）
+    public var customItemOrdersByDisplay: [String: [String]]
+    /// 历史向后兼容排序包装（读写主屏基准分区或共享分区）
+    public var customItemOrder: [String] {
+        get {
+            if syncItemOrderAcrossDisplays {
+                return customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] ?? []
+            }
+            return customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] ?? customItemOrdersByDisplay[Self.BUILTIN_DISPLAY_KEY] ?? []
+        }
+        set {
+            if syncItemOrderAcrossDisplays {
+                customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = newValue
+                for k in customItemOrdersByDisplay.keys {
+                    customItemOrdersByDisplay[k] = newValue
+                }
+            } else {
+                customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] = newValue
+                customItemOrdersByDisplay[Self.BUILTIN_DISPLAY_KEY] = newValue
+            }
+        }
+    }
     /// 是否开机自启动
     public var launchAtLogin: Bool
     /// 用户是否已选择跳过「屏幕录制权限」引导
     public var skipScreenCapturePrompt: Bool
+    
+    /// 获取指定屏幕持久键下的排序
+    public func itemOrder(for displayKey: String) -> [String] {
+        if syncItemOrderAcrossDisplays {
+            return customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] ?? []
+        }
+        return customItemOrdersByDisplay[displayKey] ?? []
+    }
+
+    /// 写入指定屏幕持久键下的排序
+    public mutating func setItemOrder(_ order: [String], for displayKey: String) {
+        if syncItemOrderAcrossDisplays {
+            customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = order
+            for k in customItemOrdersByDisplay.keys {
+                customItemOrdersByDisplay[k] = order
+            }
+        } else {
+            customItemOrdersByDisplay[displayKey] = order
+        }
+    }
+
+    /// 重置指定屏幕持久键下的排序
+    public mutating func resetItemOrder(for displayKey: String) {
+        if syncItemOrderAcrossDisplays {
+            customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = []
+            for k in customItemOrdersByDisplay.keys {
+                customItemOrdersByDisplay[k] = []
+            }
+        } else {
+            customItemOrdersByDisplay[displayKey] = []
+        }
+    }
     
     /// 悬停防抖时延 (秒)
     public var hoverExpandDuration: TimeInterval {
@@ -98,6 +159,8 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         showMenuBarIcon: Bool = true,
         hoverExpandDelayMs: Double = IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0,
         collapseDelayMs: Double = IslandTheme.Timing.COLLAPSE_DELAY * 1000.0,
+        syncItemOrderAcrossDisplays: Bool = false,
+        customItemOrdersByDisplay: [String: [String]] = [:],
         customItemOrder: [String] = [],
         launchAtLogin: Bool = false,
         skipScreenCapturePrompt: Bool = false
@@ -109,7 +172,13 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.showMenuBarIcon = showMenuBarIcon
         self.hoverExpandDelayMs = hoverExpandDelayMs
         self.collapseDelayMs = collapseDelayMs
-        self.customItemOrder = customItemOrder
+        self.syncItemOrderAcrossDisplays = syncItemOrderAcrossDisplays
+        var initialOrders = customItemOrdersByDisplay
+        if initialOrders.isEmpty && !customItemOrder.isEmpty {
+            initialOrders[Self.PRIMARY_DISPLAY_KEY] = customItemOrder
+            initialOrders[Self.BUILTIN_DISPLAY_KEY] = customItemOrder
+        }
+        self.customItemOrdersByDisplay = initialOrders
         self.launchAtLogin = launchAtLogin
         self.skipScreenCapturePrompt = skipScreenCapturePrompt
     }
@@ -139,7 +208,22 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.showMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
         self.hoverExpandDelayMs = try container.decodeIfPresent(Double.self, forKey: .hoverExpandDelayMs) ?? (IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0)
         self.collapseDelayMs = try container.decodeIfPresent(Double.self, forKey: .collapseDelayMs) ?? (IslandTheme.Timing.COLLAPSE_DELAY * 1000.0)
-        self.customItemOrder = try container.decodeIfPresent([String].self, forKey: .customItemOrder) ?? []
+        self.syncItemOrderAcrossDisplays = try container.decodeIfPresent(Bool.self, forKey: .syncItemOrderAcrossDisplays) ?? false
+        
+        var orders = try container.decodeIfPresent([String: [String]].self, forKey: .customItemOrdersByDisplay) ?? [:]
+        // 历史单数组向后兼容迁移：既有配置解码迁移至主屏与内建屏分区
+        if orders.isEmpty {
+            enum LegacyKeys: String, CodingKey {
+                case customItemOrder
+            }
+            if let legacyContainer = try? decoder.container(keyedBy: LegacyKeys.self),
+               let legacyOrder = try? legacyContainer.decodeIfPresent([String].self, forKey: .customItemOrder),
+               !legacyOrder.isEmpty {
+                orders[Self.PRIMARY_DISPLAY_KEY] = legacyOrder
+                orders[Self.BUILTIN_DISPLAY_KEY] = legacyOrder
+            }
+        }
+        self.customItemOrdersByDisplay = orders
         self.launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         self.skipScreenCapturePrompt = try container.decodeIfPresent(Bool.self, forKey: .skipScreenCapturePrompt) ?? false
     }

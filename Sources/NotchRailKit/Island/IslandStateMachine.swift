@@ -37,6 +37,9 @@ public final class IslandStateMachine: ObservableObject {
     @Published public private(set) var currentState: IslandDisplayState = .compact
     @Published public private(set) var activeOverflowCount: Int = 1
     
+    /// 绑定的显示器 ID（多屏物理隔离与焦点移交，ADR 0017）
+    public var displayID: CGDirectDisplayID?
+
     public var hoverExpandDelay: TimeInterval = IslandTheme.Timing.HOVER_EXPAND_DELAY
     public var collapseDelay: TimeInterval = IslandTheme.Timing.COLLAPSE_DELAY
     
@@ -174,6 +177,9 @@ public final class IslandStateMachine: ObservableObject {
         debounceTimer?.invalidate()
         debounceTimer = nil
         self.activeOverflowCount = overflowCount
+        if let dID = displayID {
+            FocusHandoff.shared.handoffFocus(to: dID)
+        }
         guard currentState != .extended else { return }
         currentState = .extended
     }
@@ -184,5 +190,6 @@ public final class IslandStateMachine: ObservableObject {
         collapseTimer = nil
         guard currentState != .compact else { return }
         currentState = .compact
+        FocusHandoff.shared.restorePreviousFocus()
     }
 }

@@ -107,7 +107,7 @@ public struct IslandRootView: View {
                                     onItemSecondaryClick: handleItemSecondaryClick,
                                     onReorder: { reordered in
                                         let newOrder = reordered.map { $0.bundleIdentifier ?? $0.persistentKey }
-                                        preferenceStore.setCustomItemOrder(newOrder)
+                                        PreferenceStore.shared.setCustomItemOrder(newOrder, for: displayID)
                                     }
                                 )
                             }
@@ -167,6 +167,7 @@ public struct IslandRootView: View {
     /// 本视图不再自读 `triggerMode`，避免同一枚举出现第二处口径（ADR 0016）。
     private func handleTap(overflowCount: Int, isSyncing: Bool) {
         guard !isSyncing else { return }
+        FocusHandoff.shared.handoffFocus(to: displayID)
         stateMachine.handleCapsuleTap(overflowCount: overflowCount)
     }
     

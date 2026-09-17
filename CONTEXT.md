@@ -37,8 +37,12 @@ The rule that each display captures the bitmaps of its own status items from its
 _Avoid_: ApplicationAssetVault, IconPool, BitmapStore, WindowPairing
 
 **ActiveMenuBarDisplay**:
-The single display whose status items the window server registers under anonymous placeholder names, while every other display keeps its items under their real bundle identifiers. It is determined by the display hosting the frontmost window — not by cursor position — and its ownership can be handed over between displays.
+The single display exclusively granted active status bar system services by the window server. Its status items are composited and register under anonymous placeholder names, while every other display's items are non-composited and keep their real bundle identifiers. It is determined exclusively by the display hosting the frontmost key window — not by cursor position — and its monopoly status is transferable between displays.
 _Avoid_: FocusedDisplay, CursorSideDisplay
+
+**FocusHandoff**:
+The seamless, deterministic transfer of active menu bar ownership to a target display triggered by user interaction with that display's island panel. Elevates the target display to the active menu bar display before bitmap capture or event dispatch.
+_Avoid_: WindowStealing, ForceFocus, ActiveDisplayHijack
 
 **MenuBarItemWindowSet**:
 The complete set of status item windows the window server maintains for one display. Every display holds a geometrically equivalent set; the sets differ only in which items that display's notch displaces.

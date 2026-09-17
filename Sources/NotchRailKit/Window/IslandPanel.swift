@@ -39,11 +39,14 @@ public final class IslandPanel: NSPanel {
         self.acceptsMouseMovedEvents = true
     }
     
+    /// 是否允许瞬态成为 Key 窗口以配合 Focus Handoff 移交活动菜单栏 (ADR 0017 / Ticket #59)
+    public var allowsTransientKey: Bool = false
+    
     public override var canBecomeKey: Bool {
-        return false
+        return allowsTransientKey
     }
     
     public override var canBecomeMain: Bool {
-        return false
+        return allowsTransientKey
     }
 }

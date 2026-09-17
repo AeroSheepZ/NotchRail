@@ -384,9 +384,8 @@ public final class MouseMonitor: ObservableObject {
                         guard let self = self else { return }
                         self.externalDwellTimer = nil
                         
-                        if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
-                            ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
-                        }
+                        // 停留意图确立：通过 FocusHandoff 将系统活动菜单栏移交到目标屏幕 (ADR 0017)
+                        FocusHandoff.shared.handoffFocus(to: geom.displayID)
                         
                         let currentGeom = ScreenManager.shared.geometry(for: geom.displayID) ?? geom
                         guard let targetSM = IslandWindowCoordinator.shared.stateMachine(for: currentGeom.displayID),
@@ -428,22 +427,33 @@ public final class MouseMonitor: ObservableObject {
             let screenMatch = ScreenManager.shared.allGeometries.first(where: {
                 $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
             })
-            if let geom = screenMatch, !geom.hasPhysicalNotch {
-                guard let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
-                if !extSM.currentState.isExpanded {
-                    let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
-                    let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
-                    if !shouldSuppress && isPointInExternalTriggerZone(location, geometry: geom) {
-                        if let targetScreen = NSScreen.screens.first(where: { $0.displayID == geom.displayID }) {
-                            ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+            if let geom = screenMatch {
+                if !geom.hasPhysicalNotch {
+                    guard let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
+                    if !extSM.currentState.isExpanded {
+                        let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
+                        let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
+                        if !shouldSuppress && isPointInExternalTriggerZone(location, geometry: geom) {
+                            FocusHandoff.shared.handoffFocus(to: geom.displayID)
+                            if geom.isFullScreenSpace {
+                                self.isAwakenedInFullScreen = true
+                            }
+                            extSM.triggerExpand(overflowCount: count)
+                            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                            IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
+                            return
                         }
-                        if geom.isFullScreenSpace {
-                            self.isAwakenedInFullScreen = true
+                    }
+                } else if geom.isFullScreenSpace {
+                    let isTouchingTopEdge = geom.isPointInTopEdgeHotZone(location)
+                    if isTouchingTopEdge {
+                        guard let sm = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
+                        FocusHandoff.shared.handoffFocus(to: geom.displayID)
+                        if !isAwakenedInFullScreen {
+                            isAwakenedInFullScreen = true
+                            sm.awakenFromFullScreen()
+                            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                         }
-                        extSM.triggerExpand(overflowCount: count)
-                        IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                        IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
-                        return
                     }
                 }
             }

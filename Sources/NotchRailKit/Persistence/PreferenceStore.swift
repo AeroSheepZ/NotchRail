@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreGraphics
 
 extension Notification.Name {
     public static let preferencesChanged = Notification.Name("NotchRail.PreferencesChanged")
@@ -56,19 +57,41 @@ public final class PreferenceStore: ObservableObject {
         self.preferences = UserPreferences()
     }
     
-    // MARK: - 自定义排序管理
+    // MARK: - 自定义排序管理（按屏隔离与可选跨屏同步，ADR 0014）
     
-    /// 更新自定义排序列表
-    public func setCustomItemOrder(_ order: [String]) {
+    /// 获取指定屏幕的自定义排序列表（未指定则取主屏基准屏）
+    public func customItemOrder(for displayID: CGDirectDisplayID? = nil) -> [String] {
+        let targetID = displayID ?? ScreenManager.shared.primaryGeometry.displayID
+        let key = ScreenManager.persistentKey(for: targetID)
+        let order = preferences.itemOrder(for: key)
+        if order.isEmpty && targetID == ScreenManager.shared.primaryGeometry.displayID {
+            return preferences.itemOrder(for: UserPreferences.PRIMARY_DISPLAY_KEY)
+        }
+        return order
+    }
+    
+    /// 更新指定屏幕的自定义排序列表
+    public func setCustomItemOrder(_ order: [String], for displayID: CGDirectDisplayID? = nil) {
+        let targetID = displayID ?? ScreenManager.shared.primaryGeometry.displayID
+        let key = ScreenManager.persistentKey(for: targetID)
         update { prefs in
-            prefs.customItemOrder = order
+            prefs.setItemOrder(order, for: key)
         }
     }
     
-    /// 重置自定义排序（恢复按原生扫描与几何物理空间排布）
-    public func resetCustomItemOrder() {
+    /// 重置指定屏幕的自定义排序（恢复按原生扫描与几何物理空间排布）
+    public func resetCustomItemOrder(for displayID: CGDirectDisplayID? = nil) {
+        let targetID = displayID ?? ScreenManager.shared.primaryGeometry.displayID
+        let key = ScreenManager.persistentKey(for: targetID)
         update { prefs in
-            prefs.customItemOrder.removeAll()
+            prefs.resetItemOrder(for: key)
+        }
+    }
+
+    /// 切换是否在所有屏幕间同步排序
+    public func setSyncItemOrderAcrossDisplays(_ sync: Bool) {
+        update { prefs in
+            prefs.syncItemOrderAcrossDisplays = sync
         }
     }
 }
