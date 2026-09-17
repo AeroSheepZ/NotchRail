@@ -142,12 +142,12 @@ macOS 用户常混合使用内建刘海屏与外接平直显示器，两者的�
 - **内建刘海屏 (`hasPhysicalNotch == true` 或内建主屏)**：
   - 状态栏高度以系统安全区（`safeAreaTop`）实测为准；无安全区数据时兜底 `NotchGeometry.DEFAULT_STATUS_BAR_HEIGHT`；
   - 顶部保留硬件级喇叭口耳翼（半径常量见 `IslandTheme.CornerRadius.TOP_EAR`）；
-  - 主屏视口（`IslandWindowCoordinator.panelsByDisplay` 中主屏基准屏那一项）常态常驻守护于此，运行本屏独立状态机，呈现紧凑态胶囊（Compact Island）。
+  - 主屏视口常态常驻守护于此，运行本屏独立状态机：作为前台活动屏时呈现紧凑态胶囊并滑出左耳翼徽标，支持交互展开；作为非活动待命屏时耳翼与徽标平滑收拢隐藏（仅保留纯黑底座防刘海露白），并锁定禁止悬停展开（杜绝展示未就绪空白状态）。
 - **外接平直显示器 (`hasPhysicalNotch == false && !isBuiltIn`)**：
   - **彻底废除 160pt 虚拟假刘海**：平直外接屏 `physicalNotchRect == .zero`，消除假刘海与常驻黑胶囊的视觉污染；
   - **动态菜单碰撞判定**：溢出判定完全基于前台 App 菜单右边缘碰撞（阈值常量见 `OverflowCalculator.APP_MENU_COLLISION_SAFETY_MARGIN`），仅当三方项被挤压时才判定为溢出；
   - **常态 100% 隐形**：平直外接屏折叠常态下完全隐退（`alpha = 0`，`ignoresMouseEvents = true`），底层窗口 100% 物理直通；
-  - **展开统一黑仿真灵动岛设计**：展开态保持统一纯黑吸光底座、微光渐变描边与顶部标志性外展平滑喇叭弧（耳翼半径同刘海屏，见 `IslandTheme.CornerRadius.TOP_EAR`）；
+  - **展开统一黑仿真灵动岛设计**：仅在当前作为前台活动屏时响应顶部热区交互并原位平滑展开；非活动待命屏保持隐退且切断悬停展开，杜绝弹出无图元的空白灵动岛；
   - **多屏独立多实例架构与隔离状态机**：每块屏幕各持一台物理隔离的 `IslandStateMachine` 与一个独立视口，全部按 `displayID` 注册于 `IslandWindowCoordinator`（见 §2.1）；心跳由 `MenuBarSyncCoordinator` 按展开屏集合集中聚合；触碰任意外接屏顶部中央热区即时原位平滑展开，收起后原位淡出，杜绝跨屏抢夺与徽标闪烁；
   - **屏幕数量无上限**：智能兼容 MacBook 内置刘海、单平直屏（Mac mini / 盒盖模式）、双外接平直屏乃至更多屏幕的任意组合；主屏视口常驻，其余屏视口按需装载（展开中或存在溢出项时保留，空闲宽限后卸载），**屏幕增减一律由幂等对账处理，不得写死屏数**；
 - **多轨物理自律与单前台活动屏独占 (Per-Display Focus & Exclusive Menu Bar)**：

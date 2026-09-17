@@ -182,7 +182,7 @@ final class PreferenceStoreTests: XCTestCase {
         let decoded = try JSONDecoder().decode(UserPreferences.self, from: legacyJSON)
         XCTAssertEqual(decoded.triggerMode, .click)
         XCTAssertEqual(decoded.customItemOrder, ["legacy.app.1", "legacy.app.2"])
-        XCTAssertEqual(decoded.itemOrder(for: "builtin"), ["legacy.app.1", "legacy.app.2"])
+        XCTAssertEqual(decoded.itemOrder(for: UserPreferences.SHARED_DISPLAY_KEY), ["legacy.app.1", "legacy.app.2"])
         XCTAssertFalse(decoded.syncItemOrderAcrossDisplays)
     }
 }

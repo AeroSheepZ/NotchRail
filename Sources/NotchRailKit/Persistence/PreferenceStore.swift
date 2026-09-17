@@ -63,11 +63,7 @@ public final class PreferenceStore: ObservableObject {
     public func customItemOrder(for displayID: CGDirectDisplayID? = nil) -> [String] {
         let targetID = displayID ?? ScreenManager.shared.primaryGeometry.displayID
         let key = ScreenManager.persistentKey(for: targetID)
-        let order = preferences.itemOrder(for: key)
-        if order.isEmpty && targetID == ScreenManager.shared.primaryGeometry.displayID {
-            return preferences.itemOrder(for: UserPreferences.PRIMARY_DISPLAY_KEY)
-        }
-        return order
+        return preferences.itemOrder(for: key)
     }
     
     /// 更新指定屏幕的自定义排序列表

@@ -38,12 +38,13 @@ public struct IslandRootView: View {
         let overflowItems = targetSnapshot?.overflowItems ?? []
         let isExpanded = stateMachine.currentState.isExpanded
         
-        // 动态尺寸与耳翼计算
+        // 动态尺寸与耳翼计算（单前台活动屏独占：非活动屏待命收拢耳翼并隐藏徽标）
+        let isActiveScreen = (geometry.displayID == screenManager.currentGeometry.displayID)
         let dynamicCompactBounds = geometry.dynamicCompactBounds(for: overflowItems.count, isSyncing: isSyncing)
-        // 平直外接屏折叠态的仿真胶囊锚点宽度严格对齐原生刘海（179.0pt），彻底消除自 0 宽形变的僵硬撕裂感
+        // 内置刘海屏活动态自适应耳翼、待命态贴合物理刘海；平直外接屏折叠常态 100% 隐形（紧凑宽为 0）
         let compactWidth: CGFloat = geometry.hasPhysicalNotch
-            ? dynamicCompactBounds.width
-            : 179.0
+            ? (isActiveScreen ? dynamicCompactBounds.width : geometry.physicalNotchRect.width)
+            : 0.0
         let compactHeight = geometry.statusBarHeight
         let dynamicWidth = geometry.dynamicExtendedBounds(for: max(1, overflowItems.count), isSyncing: isSyncing).width
         
@@ -53,8 +54,8 @@ public struct IslandRootView: View {
             ? IslandTheme.CornerRadius.EXTENDED_BOTTOM
             : IslandTheme.CornerRadius.COMPACT_BOTTOM
         
-        // 计算紧凑态相对刘海中心的水平偏移（左耳翼向左延展，底座永不偏移摄像头）
-        let leftWing = isExpanded ? 0.0 : (geometry.hasPhysicalNotch ? IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: isSyncing) : 0.0)
+        // 计算紧凑态相对刘海中心的水平偏移（仅活动屏延展左耳翼；待命屏耳翼归零居中贴合硬件）
+        let leftWing = (isExpanded || !isActiveScreen) ? 0.0 : (geometry.hasPhysicalNotch ? IslandWingMetrics.leftWingWidth(for: overflowItems.count, isSyncing: isSyncing) : 0.0)
         let horizontalOffset = -leftWing / 2.0
         
         VStack(spacing: 0) {
@@ -68,12 +69,13 @@ public struct IslandRootView: View {
                 
                 // 2. 灵动岛内部内容层（分层级联渲染）
                 VStack(spacing: 4) {
-                    // 顶部栏：加载中左耳翼展示矢量 Spinner；就绪后展示黄色徽标；展开态展示设置齿轮
+                    // 顶部栏：活动态展示加载 Spinner / 黄色徽标；待命态隐藏徽标；展开态展示设置齿轮
                     IslandTopBar(
-                        overflowCount: overflowItems.count,
-                        isSyncing: isSyncing,
+                        overflowCount: (isActiveScreen || isExpanded) ? overflowItems.count : 0,
+                        isSyncing: (isActiveScreen || isExpanded) ? isSyncing : false,
                         showsSettingsButton: isExpanded,
                         onSettingsTapped: {
+                            FocusHandoff.shared.handoffFocus(to: displayID)
                             SettingsWindowCoordinator.shared.showSettings()
                         }
                     )
@@ -106,7 +108,7 @@ public struct IslandRootView: View {
                                     onItemTap: handleItemTap,
                                     onItemSecondaryClick: handleItemSecondaryClick,
                                     onReorder: { reordered in
-                                        let newOrder = reordered.map { $0.bundleIdentifier ?? $0.persistentKey }
+                                        let newOrder = reordered.map { $0.preferenceKey }
                                         PreferenceStore.shared.setCustomItemOrder(newOrder, for: displayID)
                                     }
                                 )
@@ -153,6 +155,9 @@ public struct IslandRootView: View {
         guard !isSyncing else { return }
         // 悬停门禁的唯一判据（三档语义定义见 `TriggerMode.respondsToHover`）
         guard preferenceStore.preferences.triggerMode.respondsToHover else { return }
+        // 单前台活动屏独占门禁：非活动屏处于待命锁定，绝不响应悬停展开 (ADR 0017)
+        let isActiveScreen = (displayID == screenManager.currentGeometry.displayID)
+        guard isActiveScreen else { return }
         
         if isHovered {
             stateMachine.handleMouseEnter(overflowCount: overflowCount)
@@ -163,10 +168,11 @@ public struct IslandRootView: View {
     
     /// 左键点击灵动岛本体（不含图标 / 设置齿轮，那两者由各自的 `Button` 消费）
     ///
-    /// 语义与模式门禁**全部下沉到 `IslandStateMachine.handleCapsuleTap`**：
-    /// 本视图不再自读 `triggerMode`，避免同一枚举出现第二处口径（ADR 0016）。
+    /// 语义与模式门禁下沉到 `IslandStateMachine.handleCapsuleTap`；
+    /// 本视图在移交焦点前先校验 `respondsToCapsuleTap`，防止在 `.hover` 模式下误触胶囊强行抢焦。
     private func handleTap(overflowCount: Int, isSyncing: Bool) {
         guard !isSyncing else { return }
+        guard preferenceStore.preferences.triggerMode.respondsToCapsuleTap else { return }
         FocusHandoff.shared.handoffFocus(to: displayID)
         stateMachine.handleCapsuleTap(overflowCount: overflowCount)
     }

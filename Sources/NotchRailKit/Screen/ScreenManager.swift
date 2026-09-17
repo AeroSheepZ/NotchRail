@@ -155,15 +155,20 @@ public final class ScreenManager: ObservableObject {
     private var spaceTransitionWorkItem: DispatchWorkItem?
     private var menuBoundaryTask: Task<Void, Never>?
     
-    /// 响应活动 Space 或前台 App 切换：仅更新全屏判定与视口穿透，不广播物理几何变更
+    /// 响应活动 Space 或前台 App 切换：仅更新全屏判定与视口穿透，并在活动屏幕变更时可靠派发通知
     private func handleSpaceOrActiveAppChanged() {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return }
         
         self.allGeometries = recalculateAllGeometries(from: screens)
+        if let mainScreen = NSScreen.main {
+            updateActiveFocusScreen(to: mainScreen)
+        }
         let active = self.activeScreen()
         let updatedGeom = ScreenManager.calculateGeometry(for: active, appMenuRightEdge: self.appMenuRightEdgeCache[active.displayID])
-        self.currentGeometry = updatedGeom
+        if self.currentGeometry != updatedGeom {
+            self.currentGeometry = updatedGeom
+        }
         
         spaceTransitionWorkItem?.cancel()
         
@@ -177,8 +182,14 @@ public final class ScreenManager: ObservableObject {
                 let finalScreens = NSScreen.screens
                 if !finalScreens.isEmpty {
                     self.allGeometries = self.recalculateAllGeometries(from: finalScreens)
+                    if let mainScreen = NSScreen.main {
+                        self.updateActiveFocusScreen(to: mainScreen)
+                    }
                     let currentActive = self.activeScreen()
-                    self.currentGeometry = ScreenManager.calculateGeometry(for: currentActive, appMenuRightEdge: self.appMenuRightEdgeCache[currentActive.displayID])
+                    let finalGeom = ScreenManager.calculateGeometry(for: currentActive, appMenuRightEdge: self.appMenuRightEdgeCache[currentActive.displayID])
+                    if self.currentGeometry != finalGeom {
+                        self.currentGeometry = finalGeom
+                    }
                 }
                 IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                 self.updateAppMenuBoundariesAsync()

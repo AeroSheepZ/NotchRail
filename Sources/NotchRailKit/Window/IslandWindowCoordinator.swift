@@ -391,7 +391,6 @@ public final class IslandWindowCoordinator: ObservableObject {
         let paddedRect = screenRect.insetBy(dx: -4, dy: -4)
         if !NSMouseInRect(location, paddedRect, false) {
             machine.triggerCollapse()
-            FocusHandoff.shared.restorePreviousFocus()
         }
     }
 }

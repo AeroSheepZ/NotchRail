@@ -48,7 +48,7 @@ public enum ExternalDisplayMode: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .followFocusedScreen: return "多屏独立多轨模式（默认）"
+        case .followFocusedScreen: return "跟随前台活动屏（默认推荐）"
         case .mainScreenOnly: return "仅在主显示器（刘海屏）显示"
         }
     }
@@ -75,32 +75,22 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var collapseDelayMs: Double
     /// 共享排序持久键
     public static let SHARED_DISPLAY_KEY = "shared"
-    /// 主显示器基准持久键
-    public static let PRIMARY_DISPLAY_KEY = "primary"
-    /// 内建刘海屏持久键
-    public static let BUILTIN_DISPLAY_KEY = "builtin"
 
     /// 是否在所有显示器之间共享相同的状态项排序（默认关闭，ADR 0014 决议 2）
     public var syncItemOrderAcrossDisplays: Bool
     /// 按屏幕独立持久化的状态项自定义排序字典（分区键为屏幕稳定持久标识，ADR 0014 决议 1）
     public var customItemOrdersByDisplay: [String: [String]]
-    /// 历史向后兼容排序包装（读写主屏基准分区或共享分区）
+    /// 历史向后兼容排序包装（读写共享分区）
     public var customItemOrder: [String] {
         get {
-            if syncItemOrderAcrossDisplays {
-                return customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] ?? []
-            }
-            return customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] ?? customItemOrdersByDisplay[Self.BUILTIN_DISPLAY_KEY] ?? []
+            customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? []
         }
         set {
+            customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = newValue
             if syncItemOrderAcrossDisplays {
-                customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = newValue
                 for k in customItemOrdersByDisplay.keys {
                     customItemOrdersByDisplay[k] = newValue
                 }
-            } else {
-                customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] = newValue
-                customItemOrdersByDisplay[Self.BUILTIN_DISPLAY_KEY] = newValue
             }
         }
     }
@@ -112,7 +102,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     /// 获取指定屏幕持久键下的排序
     public func itemOrder(for displayKey: String) -> [String] {
         if syncItemOrderAcrossDisplays {
-            return customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? customItemOrdersByDisplay[Self.PRIMARY_DISPLAY_KEY] ?? []
+            return customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? []
         }
         return customItemOrdersByDisplay[displayKey] ?? []
     }
@@ -175,8 +165,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.syncItemOrderAcrossDisplays = syncItemOrderAcrossDisplays
         var initialOrders = customItemOrdersByDisplay
         if initialOrders.isEmpty && !customItemOrder.isEmpty {
-            initialOrders[Self.PRIMARY_DISPLAY_KEY] = customItemOrder
-            initialOrders[Self.BUILTIN_DISPLAY_KEY] = customItemOrder
+            initialOrders[Self.SHARED_DISPLAY_KEY] = customItemOrder
         }
         self.customItemOrdersByDisplay = initialOrders
         self.launchAtLogin = launchAtLogin
@@ -211,7 +200,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.syncItemOrderAcrossDisplays = try container.decodeIfPresent(Bool.self, forKey: .syncItemOrderAcrossDisplays) ?? false
         
         var orders = try container.decodeIfPresent([String: [String]].self, forKey: .customItemOrdersByDisplay) ?? [:]
-        // 历史单数组向后兼容迁移：既有配置解码迁移至主屏与内建屏分区
+        // 历史单数组向后兼容迁移：既有配置解码迁移至共享分区
         if orders.isEmpty {
             enum LegacyKeys: String, CodingKey {
                 case customItemOrder
@@ -219,8 +208,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
             if let legacyContainer = try? decoder.container(keyedBy: LegacyKeys.self),
                let legacyOrder = try? legacyContainer.decodeIfPresent([String].self, forKey: .customItemOrder),
                !legacyOrder.isEmpty {
-                orders[Self.PRIMARY_DISPLAY_KEY] = legacyOrder
-                orders[Self.BUILTIN_DISPLAY_KEY] = legacyOrder
+                orders[Self.SHARED_DISPLAY_KEY] = legacyOrder
             }
         }
         self.customItemOrdersByDisplay = orders

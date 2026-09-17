@@ -36,6 +36,7 @@ private enum SettingsTab: Int, CaseIterable, Identifiable {
 public struct SettingsView: View {
     @ObservedObject var preferenceStore = PreferenceStore.shared
     @ObservedObject var permissionManager = PermissionManager.shared
+    @ObservedObject private var screenManager = ScreenManager.shared
     /// 菜单栏图标解析器：**必须观察**，否则应用管理列表的图标永不刷新
     ///
     /// `IconResolver` 是 `ObservableObject`，`iconStates` 在每批图标落位后发布。
@@ -60,11 +61,8 @@ public struct SettingsView: View {
     @State private var showResetAlert: Bool = false
     @State private var isRefreshingPermissions: Bool = false
     @State private var isManualScanning: Bool = false
-    @State private var selectedDisplayID: CGDirectDisplayID? = nil
     /// 开机自启动的如实回报（注册失败 / 待批准 / 与系统侧不一致时显示，正常态为 nil）
     @State private var launchAtLoginMessage: String? = nil
-    /// 当前可用屏幕拓扑（由 `ScreenManager.$allGeometries` 单向同步，作为本视图唯一的屏幕清单来源）
-    @State private var availableGeometries: [NotchGeometry] = []
     /// 本面板所选屏幕的快照刷新脉冲（仅在**该屏**快照更新时自增，杜绝任一块屏广播导致整面板重算）
     @State private var snapshotRevision: Int = 0
     
@@ -88,23 +86,17 @@ public struct SettingsView: View {
             Text("所有触发模式、动画时延与显示策略都将被重置为出厂推荐配置。")
         }
         .onAppear {
-            availableGeometries = ScreenManager.shared.allGeometries
             launchAtLoginMessage = nil
             syncLaunchAtLoginMirror()
-            if selectedDisplayID == nil {
-                let currentScreen = NSApp.keyWindow?.screen ?? NSScreen.main
-                let targetDisplayID = currentScreen?.displayID ?? ScreenManager.shared.primaryGeometry.displayID
-                selectedDisplayID = targetDisplayID
-            }
         }
-        // 屏幕清单单向同步：仅在拓扑变化（插拔屏 / 合盖）时更新，不随焦点屏切换重算
-        .onReceive(ScreenManager.shared.$allGeometries) { geoms in
-            availableGeometries = geoms
-        }
-        // 快照刷新：仅采纳**本面板所选屏幕**的更新，其他屏的广播一律忽略
+        // 快照刷新：仅采纳当前活动屏幕的更新
         .onReceive(NotificationCenter.default.publisher(for: .menuBarSnapshotUpdated)) { notif in
             guard let snapshot = notif.object as? MenuBarSnapshot,
                   snapshot.displayID == activeDisplayID else { return }
+            snapshotRevision &+= 1
+        }
+        // 活动屏切换：即刻刷新应用管理列表
+        .onReceive(NotificationCenter.default.publisher(for: .activeDisplayChanged)) { _ in
             snapshotRevision &+= 1
         }
     }
@@ -234,11 +226,11 @@ public struct SettingsView: View {
                 
                 switch preferenceStore.preferences.externalDisplayMode {
                 case .followFocusedScreen:
-                    Text("双屏独立双轨模式：主屏常驻紧凑胶囊，外接平直显示器独立常态隐形且触碰原位展开；两屏物理隔离，互不干扰。")
+                    Text("单前台独占激活：灵动岛仅在当前正在工作的前台活动屏幕上激活展开；待命屏幕保持静默收起（内置屏纯黑底座贴合刘海，外接屏完全隐形），杜绝未就绪的空白状态。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 case .mainScreenOnly:
-                    Text("灵动岛固定驻留在主显示器（内置刘海屏）顶部；外接屏幕不再承载灵动岛，该屏被挤压的图标因而无法唤出。")
+                    Text("灵动岛固定驻留在主显示器（内置刘海屏）顶部；外接屏幕完全不启用灵动岛。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -286,6 +278,7 @@ public struct SettingsView: View {
     private var timingTab: some View {
         Form {
             Section {
+                let allowsHover = preferenceStore.preferences.triggerMode.respondsToHover
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("移入展开防抖延迟")
@@ -303,12 +296,20 @@ public struct SettingsView: View {
                         in: 50...300,
                         step: 10
                     )
+                    .disabled(!allowsHover)
                     
-                    Text("光标进入刘海区域或热区后停留超过此时间方触发展开，防止快速划过误触。推荐 120ms。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if allowsHover {
+                        Text("光标进入刘海区域或热区后停留超过此时间方触发展开，防止快速划过误触。推荐 120ms。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("当前打开方式为「仅鼠标点击」，移入展开防抖延迟不生效。")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
                 }
                 .padding(.vertical, 4)
+                .opacity(allowsHover ? 1.0 : 0.5)
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -358,36 +359,42 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
     
-    /// 本面板当前查看的屏幕（优先用户所选；所选屏已拔出时回退主屏基准屏）
+    /// 本面板当前查看的屏幕：单前台活动源自适应绑定（严格跟随当前前台活动屏幕，解决跨屏配置割裂与待命空白）
     private var activeDisplayID: CGDirectDisplayID {
-        let allGeoms = availableGeometries
-        if let selected = selectedDisplayID, allGeoms.contains(where: { $0.displayID == selected }) {
-            return selected
-        }
-        let primaryID = ScreenManager.shared.primaryGeometry.displayID
-        if allGeoms.contains(where: { $0.displayID == primaryID }) {
-            return primaryID
-        }
-        return allGeoms.first?.displayID ?? 0
+        screenManager.currentGeometry.displayID
     }
     
     private var appsTab: some View {
         VStack(spacing: 10) {
-            // 0. 多显示器分段切换选择器（多屏连接时支持手动切换查看，解耦鼠标跨屏导致的数据源抖动）
-            let allScreens = availableGeometries
-            if allScreens.count > 1 {
-                let currentActiveDisplayID = ScreenManager.shared.currentGeometry.displayID
-                Picker("显示器", selection: Binding(
-                    get: { activeDisplayID },
-                    set: { selectedDisplayID = $0 }
-                )) {
-                    ForEach(allScreens, id: \.displayID) { geom in
-                        let isActive = geom.displayID == currentActiveDisplayID
-                        Text("\(geom.displayName) (\(isActive ? "● 活动中" : "○ 待命"))").tag(geom.displayID)
-                    }
-                }
-                .pickerStyle(.segmented)
+            // 0. 前台活动屏幕自适应指示条（单前台活动源独占：随鼠标焦点自适应流转，彻底消除非活动屏待命空白）
+            let currentGeom = screenManager.currentGeometry
+            HStack(spacing: 8) {
+                Label("当前前台活动屏幕：\(currentGeom.displayName)", systemImage: "display")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Text("🟢 已激活光栅化")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.green)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.6)
+            )
+            
+            HStack {
+                Text("💡 焦点跟随：在任一显示器点击激活，此处将毫秒级同步呈现该屏幕的状态项。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 2)
             
             // 1. 顶部现代化搜索与统计栏
             HStack(spacing: 10) {
@@ -534,9 +541,6 @@ public struct SettingsView: View {
                 Button {
                     isManualScanning = true
                     Task { @MainActor in
-                        if activeDisplayID != ScreenManager.shared.currentGeometry.displayID {
-                            FocusHandoff.shared.handoffFocus(to: activeDisplayID)
-                        }
                         MenuBarSyncCoordinator.shared.scheduleSync(immediate: true, showProgress: true)
                         try? await Task.sleep(nanoseconds: 600_000_000)
                         isManualScanning = false

@@ -158,6 +158,14 @@ public final class MouseMonitor: ObservableObject {
         }
         let isExpanded = sm.currentState.isExpanded
         
+        // 单前台活动屏独占门禁：非活动屏处于待命锁定，绝不响应悬停或碰顶触发展开 (ADR 0017)
+        let activeDisplayID = ScreenManager.shared.currentGeometry.displayID
+        let isActiveScreen = (geom.displayID == activeDisplayID)
+        if !isActiveScreen && !isExpanded {
+            cancelExternalDwellTimer()
+            return
+        }
+        
         // 快速熔断与触顶预热调度 (Issue #51)
         if !isExpanded && !isAwakenedInFullScreen {
             let topZoneThreshold = geom.screenFrame.maxY - (geom.statusBarHeight + 60.0)
@@ -418,39 +426,33 @@ public final class MouseMonitor: ObservableObject {
         // 1. 若当前灵动岛处于展开态，委托视口管理器判定并驱动收起外部点击 (Ticket #48 & #53)
         IslandWindowCoordinator.shared.handleOutsideClickIfNeeded(at: location)
         
-        // 2. 对齐 triggerMode：该档响应点击时，落在外接平直屏顶部中央热区即即时展开
-        let prefs = PreferenceStore.shared.preferences
-        if prefs.triggerMode.respondsToCapsuleTap {
-            let screenMatch = ScreenManager.shared.allGeometries.first(where: {
-                $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
-            })
-            if let geom = screenMatch {
-                if !geom.hasPhysicalNotch {
-                    guard let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
-                    if !extSM.currentState.isExpanded {
-                        let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
-                        let shouldSuppress = prefs.hideWhenNoOverflow && count == 0
-                        if !shouldSuppress && isPointInExternalTriggerZone(location, geometry: geom) {
-                            FocusHandoff.shared.handoffFocus(to: geom.displayID)
-                            if geom.isFullScreenSpace {
-                                self.isAwakenedInFullScreen = true
-                            }
-                            extSM.triggerExpand(overflowCount: count)
-                            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                            IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
-                            return
-                        }
+        // 2. 落在外接平直屏顶部中央热区：统一委托状态机唯一入口 handleCapsuleTap 处理（ADR 0016 契约）
+        let screenMatch = ScreenManager.shared.allGeometries.first(where: {
+            $0.screenFrame.insetBy(dx: -2.0, dy: -2.0).contains(location)
+        })
+        if let geom = screenMatch {
+            if !geom.hasPhysicalNotch {
+                guard let extSM = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
+                if isPointInExternalTriggerZone(location, geometry: geom) {
+                    let count = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: geom.displayID)?.overflowCount ?? 0
+                    FocusHandoff.shared.handoffFocus(to: geom.displayID)
+                    if geom.isFullScreenSpace {
+                        self.isAwakenedInFullScreen = true
                     }
-                } else if geom.isFullScreenSpace {
-                    let isTouchingTopEdge = geom.isPointInTopEdgeHotZone(location)
-                    if isTouchingTopEdge {
-                        guard let sm = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
-                        FocusHandoff.shared.handoffFocus(to: geom.displayID)
-                        if !isAwakenedInFullScreen {
-                            isAwakenedInFullScreen = true
-                            sm.awakenFromFullScreen()
-                            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
-                        }
+                    extSM.handleCapsuleTap(overflowCount: count)
+                    IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+                    IslandWindowCoordinator.shared.setIgnoresMouseEvents(false, for: geom.displayID)
+                    return
+                }
+            } else if geom.isFullScreenSpace {
+                let isTouchingTopEdge = geom.isPointInTopEdgeHotZone(location)
+                if isTouchingTopEdge {
+                    guard let sm = IslandWindowCoordinator.shared.stateMachine(for: geom.displayID) else { return }
+                    FocusHandoff.shared.handoffFocus(to: geom.displayID)
+                    if !isAwakenedInFullScreen {
+                        isAwakenedInFullScreen = true
+                        sm.awakenFromFullScreen()
+                        IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
                     }
                 }
             }

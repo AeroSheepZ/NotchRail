@@ -57,6 +57,10 @@ public final class FocusHandoff {
             return
         }
         self.previousFrontApp = nil
-        app.activate()
+        if #available(macOS 14.0, *) {
+            app.activate()
+        } else {
+            app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        }
     }
 }
