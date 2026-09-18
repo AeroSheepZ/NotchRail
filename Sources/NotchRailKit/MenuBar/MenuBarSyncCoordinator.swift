@@ -113,13 +113,10 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
     }
     
-    /// 光标靠近顶部热区时唤醒警戒就绪态，执行单次静默增量预热（带 SmartHeartbeat.PREWARM_TIMEOUT_SECONDS 超时自愈保护）
+    /// 光标靠近顶部热区时唤醒警戒就绪态（保持状态机流转契约，绝不派发冗余的后台全量重扫，杜绝设置窗口误触竞态）
     public func armPrewarm() {
         guard heartbeatState == .dormant else { return }
         heartbeatState = .armed
-        if !isScanning {
-            scheduleSync(immediate: false, showProgress: false)
-        }
         
         prewarmTimeoutTimer?.invalidate()
         prewarmTimeoutTimer = Timer.scheduledTimer(withTimeInterval: SmartHeartbeat.PREWARM_TIMEOUT_SECONDS, repeats: false) { [weak self] _ in
@@ -192,7 +189,7 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         }
     }
     
-    /// 执行后台扫描、多屏预热与图标同步解析
+    /// 执行后台扫描与图标同步解析（单前台活动屏独占公理：仅扫描当前活动屏幕，严禁跨屏遍历覆写）
     private func performSync(showProgress: Bool = false) {
         let currentGeom = ScreenManager.shared.currentGeometry
         guard !isScanning else {
@@ -208,7 +205,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
         pendingResync = false
         let startTime = Date()
         
-        let allGeometries = ScreenManager.shared.allGeometries
         let currentCustomOrder = PreferenceStore.shared.customItemOrder(for: currentGeom.displayID)
         
         Task {
@@ -230,54 +226,33 @@ public final class MenuBarSyncCoordinator: ObservableObject {
                 )
             }
             
-            // 3. 立即原子发布当前屏幕快照（此时灵动岛内的溢出项图标已 100% 准备就绪，展开即见真实图标，0 等待！）
+            // 3. 立即原子发布当前活动屏幕快照（此时灵动岛内的溢出项图标已 100% 准备就绪，展开即见真实图标，0 等待！）
             await MainActor.run {
-                // 按屏无差别广播：快照自身携带 displayID，由订阅方按本屏过滤，
-                // 杜绝「仅焦点屏才刷新」导致非焦点屏 UI 停滞
-                self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
-                NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
+                // 防退化覆盖保护：若新扫描快照全量退化为匿名未识别项，而既有快照包含有效应用，绝不覆盖健康快照
+                let existing = self.snapshotsByDisplay[currentSnapshot.displayID]
+                let isNewDegraded = !currentSnapshot.allItems.isEmpty && currentSnapshot.allItems.allSatisfy { $0.bundleIdentifier == nil && $0.title == "菜单栏项" }
+                let existingHasIdentities = existing?.allItems.contains { $0.bundleIdentifier != nil } ?? false
+
+                if !(isNewDegraded && existingHasIdentities) {
+                    self.snapshotsByDisplay[currentSnapshot.displayID] = currentSnapshot
+                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
+                }
                 self.isPrewarming = false
             }
             
-            // 4. 后台解析剩余原生可见项（供偏好设置面板完整显示）
-            // 在初次启动、显式全量扫描(showProgress == true)时对当前活动屏所有项建立真实位图缓存；
-            // 日常心跳时对未进入本屏缓存或倍率低于本屏物理倍率的项定向补解。
-            let screenScale = currentGeom.scaleFactor
-            let unbufferedVisible = currentSnapshot.allItems.filter { item in
-                if showProgress { return true }
-                guard let scale = IconResolver.shared.cachedScale(for: item) else { return true }
-                return scale + 0.01 < screenScale
-            }
-            if !unbufferedVisible.isEmpty {
-                await IconResolver.shared.resolveIcons(
-                    for: unbufferedVisible,
-                    displayID: currentSnapshot.displayID,
-                    forceRefresh: showProgress
-                )
-            }
-            
-            // 5. 并行预热其他连接屏幕（仅在初次未扫描、显式重扫、或灵动岛展开时刷新动态数值项）
-            var otherSnapshots: [CGDirectDisplayID: MenuBarSnapshot] = [:]
-            let hasUnwarmedDisplays = allGeometries.contains { $0.displayID != currentGeom.displayID && self.snapshotsByDisplay[$0.displayID] == nil }
-            if showProgress || hasUnwarmedDisplays || !self.expandedDisplayIDs.isEmpty {
-                for otherGeom in allGeometries where otherGeom.displayID != currentGeom.displayID {
-                    let needsSync = showProgress || self.snapshotsByDisplay[otherGeom.displayID] == nil || self.expandedDisplayIDs.contains(otherGeom.displayID)
-                    if needsSync {
-                        let otherItems = await MenuBarWindowScanner.shared.scanMenuBarItems(for: otherGeom)
-                        let otherCustomOrder = PreferenceStore.shared.customItemOrder(for: otherGeom.displayID)
-                        let otherSnap = OverflowCalculator.resolve(
-                            items: otherItems,
-                            geometry: otherGeom,
-                            customItemOrder: otherCustomOrder
-                        )
-                        if !otherSnap.overflowItems.isEmpty {
-                            await IconResolver.shared.resolveIcons(
-                                for: otherSnap.overflowItems,
-                                displayID: otherGeom.displayID,
-                                forceRefresh: showProgress
-                            )
-                        }
-                        otherSnapshots[otherGeom.displayID] = otherSnap
+            // 4. 当前活动屏原生可见项平滑补全（仅在初次未缓存时后台按需单次捕获；已有项 0ms 跳过；显式手动重扫全量刷新）
+            let visibleItems = currentSnapshot.allItems.filter { $0.displayMode != .overflowed }
+            if !visibleItems.isEmpty {
+                let unbufferedVisible = showProgress ? visibleItems : visibleItems.filter { IconResolver.shared.image(for: $0) == nil }
+                if !unbufferedVisible.isEmpty {
+                    await IconResolver.shared.resolveIcons(
+                        for: unbufferedVisible,
+                        displayID: currentSnapshot.displayID,
+                        forceRefresh: showProgress
+                    )
+                    // 补全完成后广播最新快照，供纯只读观察者（如设置面板）增量刷新图标
+                    await MainActor.run {
+                        NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: currentSnapshot)
                     }
                 }
             }
@@ -290,12 +265,6 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             
             await MainActor.run {
-                // 5. 更新各屏快照池缓存并原子广播各屏专属更新（快照自带 displayID，订阅方按本屏过滤）
-                for (dispID, snap) in otherSnapshots {
-                    self.snapshotsByDisplay[dispID] = snap
-                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: snap)
-                }
-                
                 self.isPrewarming = false
                 self.isScanning = false
                 
@@ -353,22 +322,20 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // 监听应用整体隐藏与取消隐藏（⌘H 应用级隐藏，与状态项显隐无关）
-        center.publisher(for: NSWorkspace.didHideApplicationNotification)
-            .sink { [weak self] _ in self?.scheduleSync() }
-            .store(in: &cancellables)
-        
-        center.publisher(for: NSWorkspace.didUnhideApplicationNotification)
-            .sink { [weak self] _ in self?.scheduleSync() }
-            .store(in: &cancellables)
-        
-        // 监听屏幕焦点变更：切屏跟随由 UI 视口 0ms 读取本地独立快照直出，绝不在切屏时派发截图任务
+        // 监听屏幕焦点变更：切屏跟随由 UI 视口 0ms 读取本地独立快照直出；若该屏此前未扫描则稍待 WindowServer 就绪后补齐
         NotificationCenter.default.publisher(for: .activeDisplayChanged)
             .sink { [weak self] notif in
                 guard let self = self else { return }
-                if let geom = notif.object as? NotchGeometry,
-                   let existingSnapshot = self.snapshotsByDisplay[geom.displayID] {
-                    NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: existingSnapshot)
+                if let geom = notif.object as? NotchGeometry {
+                    if let existingSnapshot = self.snapshotsByDisplay[geom.displayID] {
+                        NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: existingSnapshot)
+                    } else {
+                        // 该屏此前从未作为活动屏扫描过，给予 60ms WindowServer 状态栏光栅化就绪缓冲后发起初始化同步
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 60_000_000)
+                            self.scheduleSync(immediate: true, showProgress: false)
+                        }
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -392,9 +359,23 @@ public final class MenuBarSyncCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // 监听偏好配置变更事件
+        // 监听偏好配置变更事件：仅做 0ms 纯内存轻量级几何重排，绝不触发重新扫描与截图，杜绝堵塞 CoreGraphics IPC 通道
         NotificationCenter.default.publisher(for: .preferencesChanged)
-            .sink { [weak self] _ in self?.scheduleSync(immediate: true, showProgress: false) }
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                for (dispID, snap) in self.snapshotsByDisplay {
+                    if let geom = ScreenManager.shared.geometry(for: dispID) {
+                        let customOrder = PreferenceStore.shared.customItemOrder(for: dispID)
+                        let updatedSnap = OverflowCalculator.resolve(
+                            items: snap.allItems,
+                            geometry: geom,
+                            customItemOrder: customOrder
+                        )
+                        self.snapshotsByDisplay[dispID] = updatedSnap
+                        NotificationCenter.default.post(name: .menuBarSnapshotUpdated, object: updatedSnap)
+                    }
+                }
+            }
             .store(in: &cancellables)
     }
 }

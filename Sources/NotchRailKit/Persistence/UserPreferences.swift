@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// 灵动岛触发方式
 public enum TriggerMode: String, Codable, CaseIterable, Sendable {
@@ -73,6 +74,23 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var hoverExpandDelayMs: Double
     /// 移出收起宽限延迟 (ms)
     public var collapseDelayMs: Double
+    
+    // MARK: - 全局快捷键偏好 (v1.0.0)
+    
+    /// 快捷键默认开启状态
+    public static let DEFAULT_HOTKEY_ENABLED = true
+    /// 默认全局按键码 (kVK_ANSI_Grave, 对应 ~)
+    public static let DEFAULT_HOTKEY_CODE: UInt32 = MacVirtualKeyCode.kVK_ANSI_Grave
+    /// 默认全局修饰键 (Carbon optionKey, 对应 ⌥)
+    public static let DEFAULT_HOTKEY_MODIFIERS: UInt32 = CarbonModifierMask.optionKey
+
+    /// 是否启用全局快捷键
+    public var hotKeyEnabled: Bool
+    /// 全局快捷键虚拟按键码
+    public var hotKeyCode: UInt32
+    /// 全局快捷键 Carbon 修饰键掩码
+    public var hotKeyModifiers: UInt32
+
     /// 共享排序持久键
     public static let SHARED_DISPLAY_KEY = "shared"
 
@@ -87,7 +105,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         }
         set {
             customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = newValue
-            if syncItemOrderAcrossDisplays {
+            if externalDisplayMode != .mainScreenOnly && syncItemOrderAcrossDisplays {
                 for k in customItemOrdersByDisplay.keys {
                     customItemOrdersByDisplay[k] = newValue
                 }
@@ -101,7 +119,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     
     /// 获取指定屏幕持久键下的排序
     public func itemOrder(for displayKey: String) -> [String] {
-        if syncItemOrderAcrossDisplays {
+        if externalDisplayMode != .mainScreenOnly && syncItemOrderAcrossDisplays {
             return customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] ?? []
         }
         return customItemOrdersByDisplay[displayKey] ?? []
@@ -109,7 +127,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
 
     /// 写入指定屏幕持久键下的排序
     public mutating func setItemOrder(_ order: [String], for displayKey: String) {
-        if syncItemOrderAcrossDisplays {
+        if externalDisplayMode != .mainScreenOnly && syncItemOrderAcrossDisplays {
             customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = order
             for k in customItemOrdersByDisplay.keys {
                 customItemOrdersByDisplay[k] = order
@@ -121,7 +139,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
 
     /// 重置指定屏幕持久键下的排序
     public mutating func resetItemOrder(for displayKey: String) {
-        if syncItemOrderAcrossDisplays {
+        if externalDisplayMode != .mainScreenOnly && syncItemOrderAcrossDisplays {
             customItemOrdersByDisplay[Self.SHARED_DISPLAY_KEY] = []
             for k in customItemOrdersByDisplay.keys {
                 customItemOrdersByDisplay[k] = []
@@ -149,6 +167,9 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         showMenuBarIcon: Bool = true,
         hoverExpandDelayMs: Double = IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0,
         collapseDelayMs: Double = IslandTheme.Timing.COLLAPSE_DELAY * 1000.0,
+        hotKeyEnabled: Bool = UserPreferences.DEFAULT_HOTKEY_ENABLED,
+        hotKeyCode: UInt32 = UserPreferences.DEFAULT_HOTKEY_CODE,
+        hotKeyModifiers: UInt32 = UserPreferences.DEFAULT_HOTKEY_MODIFIERS,
         syncItemOrderAcrossDisplays: Bool = false,
         customItemOrdersByDisplay: [String: [String]] = [:],
         customItemOrder: [String] = [],
@@ -162,6 +183,9 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.showMenuBarIcon = showMenuBarIcon
         self.hoverExpandDelayMs = hoverExpandDelayMs
         self.collapseDelayMs = collapseDelayMs
+        self.hotKeyEnabled = hotKeyEnabled
+        self.hotKeyCode = hotKeyCode
+        self.hotKeyModifiers = hotKeyModifiers
         self.syncItemOrderAcrossDisplays = syncItemOrderAcrossDisplays
         var initialOrders = customItemOrdersByDisplay
         if initialOrders.isEmpty && !customItemOrder.isEmpty {
@@ -197,6 +221,9 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.showMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
         self.hoverExpandDelayMs = try container.decodeIfPresent(Double.self, forKey: .hoverExpandDelayMs) ?? (IslandTheme.Timing.HOVER_EXPAND_DELAY * 1000.0)
         self.collapseDelayMs = try container.decodeIfPresent(Double.self, forKey: .collapseDelayMs) ?? (IslandTheme.Timing.COLLAPSE_DELAY * 1000.0)
+        self.hotKeyEnabled = try container.decodeIfPresent(Bool.self, forKey: .hotKeyEnabled) ?? Self.DEFAULT_HOTKEY_ENABLED
+        self.hotKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .hotKeyCode) ?? Self.DEFAULT_HOTKEY_CODE
+        self.hotKeyModifiers = try container.decodeIfPresent(UInt32.self, forKey: .hotKeyModifiers) ?? Self.DEFAULT_HOTKEY_MODIFIERS
         self.syncItemOrderAcrossDisplays = try container.decodeIfPresent(Bool.self, forKey: .syncItemOrderAcrossDisplays) ?? false
         
         var orders = try container.decodeIfPresent([String: [String]].self, forKey: .customItemOrdersByDisplay) ?? [:]

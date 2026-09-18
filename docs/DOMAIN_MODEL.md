@@ -214,11 +214,19 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var showMenuBarIcon: Bool                    // 默认 true
     public var hoverExpandDelayMs: Double               // 默认取 IslandTheme.Timing.HOVER_EXPAND_DELAY
     public var collapseDelayMs: Double                  // 默认取 IslandTheme.Timing.COLLAPSE_DELAY
+    public var hotKeyEnabled: Bool                      // 默认 true；是否启用全局自定义快捷键
+    public var hotKeyCode: UInt32                       // 默认 MacVirtualKeyCode.kVK_ANSI_Grave (0x32, 对应 ~)
+    public var hotKeyModifiers: UInt32                  // 默认 CarbonModifierMask.optionKey (0x0800, 对应 ⌥)
     public var customItemOrdersByDisplay: [String: [String]] // 按持久化屏幕键隔离存储的排序 (ADR 0014)
     public var syncItemOrderAcrossDisplays: Bool        // 默认 false；是否跨屏同步排序 (ADR 0014)
     public var customItemOrder: [String]                // 计算属性；作用域见 CONTEXT.md 的 ItemOrderScope（默认按屏独立）
     public var launchAtLogin: Bool                      // 默认 false；系统侧注册状态的镜像
     public var skipScreenCapturePrompt: Bool            // 默认 false
+}
+
+public enum NotchRailVersion {
+    public static let CURRENT_VERSION = "1.0.0"
+    public static let CURRENT_BUILD = "13"
 }
 ```
 

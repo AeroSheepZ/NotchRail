@@ -68,11 +68,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
     
+    public func applicationWillTerminate(_ notification: Notification) {
+        GlobalHotKeyManager.shared.stop()
+    }
+
     /// 启动 NotchRail 主核心服务
     private func startMainServices() {
         print("🚀 [NotchRail] 启动灵动岛吸顶常驻窗口与菜单栏自动同步服务...")
         IslandWindowCoordinator.shared.start()
         MenuBarSyncCoordinator.shared.start()
         StatusItemManager.shared.start()
+        GlobalHotKeyManager.shared.start()
     }
 }

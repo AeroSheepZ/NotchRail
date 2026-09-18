@@ -72,4 +72,31 @@ public final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         closing.contentViewController = nil
         window = nil
     }
+
+    /// 设置窗口移动（如跨屏拖动）时同步更新活动焦点屏
+    public func windowDidMove(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow, win === window, let targetScreen = win.screen else { return }
+        syncFocusToScreen(targetScreen)
+    }
+
+    /// 设置窗口所在显示器变更时同步更新活动焦点屏
+    public func windowDidChangeScreen(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow, win === window, let targetScreen = win.screen else { return }
+        syncFocusToScreen(targetScreen)
+    }
+
+    /// 设置窗口成为 Key Window（如用户点击设置面板激活）时同步更新活动焦点屏
+    public func windowDidBecomeKey(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow, win === window, let targetScreen = win.screen else { return }
+        syncFocusToScreen(targetScreen)
+    }
+
+    /// 将活动屏幕无感同步至设置窗口当前所在的屏幕 (ADR 0017)
+    private func syncFocusToScreen(_ screen: NSScreen) {
+        let displayID = screen.displayID
+        if ScreenManager.shared.currentGeometry.displayID != displayID {
+            ScreenManager.shared.updateActiveFocusScreen(to: screen)
+            IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
+        }
+    }
 }

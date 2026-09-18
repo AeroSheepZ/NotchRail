@@ -11,6 +11,18 @@ public final class MouseMonitor: ObservableObject {
     
     @Published public private(set) var isAwakenedInFullScreen: Bool = false
     
+    /// 在全屏空间中显式标记唤醒态
+    public func awakenInFullScreen() {
+        self.isAwakenedInFullScreen = true
+    }
+    
+    /// 重置全屏唤醒状态与计时器（供快捷键收起时复原全屏隐退）
+    public func resetFullScreenAwakening() {
+        self.isAwakenedInFullScreen = false
+        self.fullScreenGraceTimer?.invalidate()
+        self.fullScreenGraceTimer = nil
+    }
+    
     private var globalMouseDownMonitor: Any?
     private var localMouseDownMonitor: Any?
     private var globalMouseMovedMonitor: Any?
@@ -466,7 +478,7 @@ public final class MouseMonitor: ObservableObject {
         for screen in screens {
             if NSMouseInRect(location, screen.frame, false) {
                 if screen.displayID != currentDisplayID {
-                    ScreenManager.shared.updateActiveFocusScreen(to: screen)
+                    FocusHandoff.shared.handoffFocus(to: screen.displayID)
                 }
                 break
             }

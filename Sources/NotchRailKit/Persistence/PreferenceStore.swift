@@ -57,6 +57,16 @@ public final class PreferenceStore: ObservableObject {
         self.preferences = UserPreferences()
     }
     
+    // MARK: - 全局快捷键原子更新 (v1.0.0)
+    
+    /// 原子更新快捷键键码与修饰键掩码，避免多次连续赋值产生 Carbon 错误瞬态注册
+    public func updateHotKey(keyCode: UInt32, modifiers: UInt32) {
+        update { prefs in
+            prefs.hotKeyCode = keyCode
+            prefs.hotKeyModifiers = modifiers
+        }
+    }
+    
     // MARK: - 自定义排序管理（按屏隔离与可选跨屏同步，ADR 0014）
     
     /// 获取指定屏幕的自定义排序列表（未指定则取主屏基准屏）

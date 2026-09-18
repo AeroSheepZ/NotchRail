@@ -115,6 +115,12 @@ public actor MenuBarAXResolver {
     public static func resolveApp(forFrame frame: CGRect, in entries: [Entry], tolerance: CGFloat = 6.0) -> Entry? {
         var best: (entry: Entry, distance: CGFloat)?
         for entry in entries {
+            // 1. 过滤尺寸为 0 的退化条目（非活动屏系统返回的 0x0 假条目）
+            guard entry.size.width > 0 && entry.size.height > 0 else { continue }
+            // 2. 校验 Y 轴中心差值，杜绝上下多屏排列时发生跨屏 X 轴错位匹配
+            let entryMidY = entry.position.y + entry.size.height / 2
+            guard abs(entryMidY - frame.midY) <= max(40.0, frame.height * 1.5) else { continue }
+
             let distance = abs(entry.position.x + entry.size.width / 2 - frame.midX)
             if distance <= tolerance, best == nil || distance < best!.distance {
                 best = (entry, distance)

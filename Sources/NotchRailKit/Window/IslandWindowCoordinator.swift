@@ -110,10 +110,26 @@ public final class IslandWindowCoordinator: ObservableObject {
         panelsByDisplay[displayID]
     }
 
+    /// 获取或惰性装载指定显示器的视口面板
+    @discardableResult
+    public func ensurePanel(for displayID: CGDirectDisplayID) -> IslandPanel? {
+        if let existing = panelsByDisplay[displayID] {
+            return existing
+        }
+        guard let geom = ScreenManager.shared.geometry(for: displayID),
+              allowsPanel(on: geom, prefs: PreferenceStore.shared.preferences),
+              let machine = stateMachine(for: displayID) else {
+            return nil
+        }
+        let created = createPanel(for: geom, stateMachine: machine)
+        panelsByDisplay[displayID] = created
+        return created
+    }
+
     /// 为指定屏幕视口执行瞬态获焦激活，驱动 WindowServer 识别活动屏幕转移 (ADR 0017)
     @discardableResult
     public func performTransientKeyActivation(for displayID: CGDirectDisplayID) -> Bool {
-        guard let panel = panelsByDisplay[displayID] else {
+        guard let panel = ensurePanel(for: displayID) else {
             return false
         }
         panel.allowsTransientKey = true
@@ -391,6 +407,52 @@ public final class IslandWindowCoordinator: ObservableObject {
         let paddedRect = screenRect.insetBy(dx: -4, dy: -4)
         if !NSMouseInRect(location, paddedRect, false) {
             machine.triggerCollapse()
+        }
+    }
+    
+    // MARK: - 全局快捷键呼出与收起 (v1.0.0)
+    
+    /// 响应全局快捷键（默认 ⌥ ~）触发：严格依多屏策略与前台活动屏切换展开/收起 (ADR 0017)
+    public func handleGlobalHotKeyToggle() {
+        let prefs = PreferenceStore.shared.preferences
+        
+        // 目标屏幕决策：若多显示器策略为「仅主屏」，固定使用主屏；否则使用当前前台活动屏幕
+        let targetGeom: NotchGeometry
+        if prefs.externalDisplayMode == .mainScreenOnly {
+            targetGeom = ScreenManager.shared.primaryGeometry
+        } else {
+            targetGeom = ScreenManager.shared.currentGeometry
+        }
+        
+        let displayID = targetGeom.displayID
+        guard let machine = stateMachine(for: displayID) else { return }
+        
+        let targetSnapshot = MenuBarSyncCoordinator.shared.effectiveSnapshot(for: displayID)
+        let overflowCount = targetSnapshot?.overflowCount ?? 0
+        
+        let willExpand = !machine.currentState.isExpanded
+        FocusHandoff.shared.handoffFocus(to: displayID)
+        
+        // 触觉反馈联动（根据用户偏好提供灵敏的原生震动反馈）
+        if prefs.enableHapticFeedback {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+        
+        if willExpand {
+            if targetGeom.isFullScreenSpace {
+                MouseMonitor.shared.awakenInFullScreen()
+            }
+            machine.toggleExpandCollapse(overflowCount: overflowCount)
+            applyDisplayAndVisibilityRules()
+            setIgnoresMouseEvents(false, for: displayID)
+        } else {
+            // 收起闭环：全屏空间退出唤醒态并隐退，全面对账穿透
+            machine.toggleExpandCollapse(overflowCount: overflowCount)
+            if targetGeom.isFullScreenSpace {
+                MouseMonitor.shared.resetFullScreenAwakening()
+                machine.enterFullScreenHidden()
+            }
+            applyDisplayAndVisibilityRules()
         }
     }
 }

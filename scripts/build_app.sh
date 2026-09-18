@@ -1,14 +1,16 @@
 #!/bin/bash
 set -e
 
-VERSION="0.0.12"
-BUILD_NUM="12"
+VERSION="1.0.0"
+BUILD_NUM="13"
 APP_NAME="NotchRail"
 BUILD_DIR=".build/release"
 APP_BUNDLE="build/${APP_NAME}.app"
 CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+
+export SDKROOT="${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk}"
 
 echo "🔨 [NotchRail] 正在编译 Release 版本 (v${VERSION})..."
 swift build -c release --disable-sandbox

@@ -38,13 +38,12 @@ public final class FocusHandoff {
             self.previousFrontApp = app
         }
 
-        // 4. 获取目标屏专属视口并执行瞬态获焦
-        guard IslandWindowCoordinator.shared.performTransientKeyActivation(for: displayID) else {
-            return false
-        }
+        // 4. 执行瞬态获焦提权（驱动 WindowServer 识别活动屏幕转移）
+        _ = IslandWindowCoordinator.shared.performTransientKeyActivation(for: displayID)
 
-        // 5. 更新 ScreenManager 内部活动屏幕
+        // 5. 更新 ScreenManager 内部活动屏幕并即时驱动视口对账 (ADR 0017)
         ScreenManager.shared.updateActiveFocusScreen(to: targetScreen)
+        IslandWindowCoordinator.shared.applyDisplayAndVisibilityRules()
 
         return true
     }

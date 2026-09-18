@@ -8,6 +8,9 @@ public actor MenuBarWindowScanner {
 
     private init() {}
 
+    /// 记忆已确认的第三方窗口真实身份（按 windowID 维护生命周期，防切屏时差瞬态丢失）
+    private var confirmedIdentities: [CGWindowID: (title: String, bundleID: String, sourcePID: pid_t?)] = [:]
+
     /// 扫描指定屏幕上的全部菜单栏项（全流程 < 2ms）
     public func scanMenuBarItems(for geometry: NotchGeometry) async -> [MenuBarItem] {
         let windowIDs = Bridging.menuBarWindowIDs()
@@ -35,11 +38,16 @@ public actor MenuBarWindowScanner {
 
             await MenuBarAXResolver.shared.registerCandidatePID(info.ownerPID)
             let app = NSRunningApplication(processIdentifier: info.ownerPID)
-            let identity = Self.resolveIdentity(
+            let identity = resolveIdentity(
                 for: info,
                 app: app,
                 axEntries: axEntries
             )
+
+            // 若本次成功解析出可信的应用身份，更新稳定记忆
+            if let bundleID = identity.bundleID, !bundleID.isEmpty, identity.title != "菜单栏项" {
+                confirmedIdentities[info.windowID] = (identity.title, bundleID, identity.sourcePID)
+            }
 
             let item = MenuBarItem(
                 windowID: info.windowID,
@@ -56,6 +64,12 @@ public actor MenuBarWindowScanner {
             items.append(item)
         }
 
+        // 清理已销毁窗口的历史身份记录（仅在有效窗口列表稳定就绪时清理）
+        let validIDs = Set(descriptors.keys)
+        if validIDs.count >= 5 {
+            confirmedIdentities = confirmedIdentities.filter { validIDs.contains($0.key) }
+        }
+
         // 从右向左物理坐标排序
         items.sort { $0.nativeFrame.maxX > $1.nativeFrame.maxX }
         return items
@@ -63,7 +77,7 @@ public actor MenuBarWindowScanner {
 
     // MARK: - 真实身份与 Bundle 解析
 
-    private static func resolveIdentity(
+    private func resolveIdentity(
         for info: Bridging.WindowDescriptor,
         app: NSRunningApplication?,
         axEntries: [MenuBarAXResolver.Entry]
@@ -73,7 +87,7 @@ public actor MenuBarWindowScanner {
         // 1. 系统核心组件：按窗口名精准映射，并派生**各自独立**的图元键。
         //    严禁统一返回 com.apple.controlcenter —— 那会让时钟/电池/Wi-Fi/声音等全部共享
         //    appAssetVault 的同一个槽位而互相覆盖，非激活屏回退取图时张冠李戴。
-        if let friendlySystemName = systemItemFriendlyName(windowTitle) {
+        if let friendlySystemName = Self.systemItemFriendlyName(windowTitle) {
             return (friendlySystemName, "com.apple.controlcenter.\(windowTitle)", nil)
         }
 
@@ -82,18 +96,10 @@ public actor MenuBarWindowScanner {
             return ("浏览器扩展", "com.apple.controlcenter.\(windowTitle)", nil)
         }
 
-        // 3. 优先通过 AX 空间坐标表映射回真实的第三方应用，同时取得**真实归属 PID**
-        if let axEntry = MenuBarAXResolver.resolveApp(forFrame: info.frame, in: axEntries) {
-            let title = (axEntry.title?.isEmpty == false ? axEntry.title : nil)
-                ?? (axEntry.description?.isEmpty == false ? axEntry.description : nil)
-                ?? axEntry.appName
-            return (title, axEntry.bundleIdentifier, axEntry.processIdentifier)
-        }
-
-        // 4. 次选：通过 WindowServer 标题中的 Bundle ID 反查（支持 com./org./io./net. 以及 notion.id 等反向域名）
+        // 3. 实名原生反查（非活动屏与原生保留项 100% 确定性命中，零模糊匹配误差）
         let looksLikeBundleID = (windowTitle.hasPrefix("com.") || windowTitle.hasPrefix("org.") || windowTitle.hasPrefix("io.") || windowTitle.hasPrefix("net.") || windowTitle.contains(".")) && !windowTitle.contains(" ") && !windowTitle.hasPrefix("Item-")
         if looksLikeBundleID {
-            let locName = localizedAppName(forBundleID: windowTitle) ?? windowTitle
+            let locName = Self.localizedAppName(forBundleID: windowTitle) ?? windowTitle
             let resolvedPID = NSRunningApplication
                 .runningApplications(withBundleIdentifier: windowTitle)
                 .first { !$0.isTerminated }?
@@ -101,12 +107,31 @@ public actor MenuBarWindowScanner {
             return (locName, windowTitle, resolvedPID)
         }
 
+        // 4. 活动屏匿名项（Item-0）：优先通过 AX 空间坐标表映射回真实的第三方应用
+        if windowTitle == "Item-0" {
+            if let axEntry = MenuBarAXResolver.resolveApp(forFrame: info.frame, in: axEntries) {
+                let title = (axEntry.title?.isEmpty == false ? axEntry.title : nil)
+                    ?? (axEntry.description?.isEmpty == false ? axEntry.description : nil)
+                    ?? axEntry.appName
+                return (title, axEntry.bundleIdentifier, axEntry.processIdentifier)
+            }
+            // 切屏瞬态 AX 条目未命中：优先从本屏稳定记忆继承真实身份，杜绝毫秒级退化为“菜单栏项”
+            if let confirmed = confirmedIdentities[info.windowID] {
+                return (confirmed.title, confirmed.bundleID, confirmed.sourcePID)
+            }
+        }
+
         // 5. 归属进程本地化名兜底：能走到此处说明 owner 并非控制中心宿主，其 bundleID 与 pid 可信
         if let appName = app?.localizedName, !appName.isEmpty, appName != "ControlCenter", appName != "控制中心" {
             return (appName, app?.bundleIdentifier, app?.processIdentifier)
         }
 
-        // 6. 无法确定归属应用：绝不冒用控制中心的 bundleID（会造成图元槽位互相覆盖），
+        // 6. 稳定身份回退防御：若窗口为其它形式但此前已有确认身份，继承之
+        if let confirmed = confirmedIdentities[info.windowID] {
+            return (confirmed.title, confirmed.bundleID, confirmed.sourcePID)
+        }
+
+        // 7. 无法确定归属应用：绝不冒用控制中心的 bundleID（会造成图元槽位互相覆盖），
         //    留空令 persistentKey 回退到 title / windowID 分支，天然唯一
         if !windowTitle.isEmpty && windowTitle != "Item-0" {
             return (windowTitle, nil, nil)
