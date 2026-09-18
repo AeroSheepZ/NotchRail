@@ -1,6 +1,6 @@
 import Foundation
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import ScreenCaptureKit
 import Combine
 
@@ -113,8 +113,8 @@ public final class PermissionManager: ObservableObject {
     ///   - onAllGranted: 辅助功能 + 屏幕录制**都已授权**时回调（触发后自动停止轮询）
     public func startPolling(
         interval: TimeInterval = 0.8,
-        onAccessibilityGranted: (() -> Void)? = nil,
-        onAllGranted: (() -> Void)? = nil
+        onAccessibilityGranted: (@MainActor @Sendable () -> Void)? = nil,
+        onAllGranted: (@MainActor @Sendable () -> Void)? = nil
     ) {
         stopPolling()
         
